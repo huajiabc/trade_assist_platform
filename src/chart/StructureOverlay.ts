@@ -11,7 +11,9 @@ import type {
 import type { Structure } from '../../shared/analysis';
 import type { Candle } from '../../shared/market';
 import { distanceToGeometry, mapStructure, type StructureGeometry, type Viewport } from './coordinates';
+import { indicatorDisplayEndTime } from './indicatorCoordinates';
 import { reserveLabel, type LabelBox } from './labelLayout';
+import { drawZoneLabel } from './zoneLabel';
 
 type Target = Parameters<IPrimitivePaneRenderer['draw']>[0];
 interface DrawItem { structure: Structure; geometry: StructureGeometry }
@@ -39,9 +41,11 @@ export class StructureOverlay implements ISeriesPrimitive {
     if (!this.attachment || !this.selectedId) return null;
     const selected = this.structures.find((item) => item.id === this.selectedId);
     if (!selected) return null;
+    const displayEnd = this.displayEndTime(selected);
+    if (displayEnd === null) return null;
     const scale = this.attachment.chart.timeScale();
     const start = scale.timeToIndex(selected.startTime as UTCTimestamp);
-    const end = scale.timeToIndex(selected.endTime as UTCTimestamp);
+    const end = scale.timeToIndex(displayEnd as UTCTimestamp);
     if (start === null || end === null || end < from || start > to) return null;
     // Selecting a model-provided level must also reveal its price even when it
     // sits outside the visible candles' automatic price range.
@@ -69,9 +73,18 @@ export class StructureOverlay implements ISeriesPrimitive {
       priceToY: (price: number) => series.priceToCoordinate(price * this.priceMultiplier),
     };
     return this.structures.flatMap((structure) => {
-      const geometry = mapStructure(structure, mapper, this.viewport);
+      const displayEnd = this.displayEndTime(structure);
+      if (displayEnd === null) return [];
+      // Only the rendered span is capped. Keep the model's original lifecycle
+      // and evidence intact in DrawItem, analysis panels, exports, and AI input.
+      const geometry = mapStructure({ ...structure, endTime: displayEnd }, mapper, this.viewport);
       return geometry ? [{ structure, geometry }] : [];
     }).sort((a, b) => Number(a.structure.id === this.selectedId) - Number(b.structure.id === this.selectedId));
+  }
+
+  private displayEndTime(structure: Structure): number | null {
+    if (structure.type !== 'FVG' && structure.type !== 'OB') return structure.endTime;
+    return indicatorDisplayEndTime({ formedAt: structure.startTime, endTime: structure.endTime }, this.candles);
   }
 
   hitTest(x: number, y: number): PrimitiveHoveredItem | null {
@@ -165,13 +178,6 @@ export class StructureOverlay implements ISeriesPrimitive {
       } else {
         ctx.beginPath(); ctx.arc(x2, y1, 3, 0, Math.PI * 2); ctx.stroke();
       }
-    } else {
-      ctx.strokeStyle = this.alpha(color, selected ? .95 : .65);
-      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-      ctx.save(); ctx.setLineDash([2, 5]); ctx.strokeStyle = this.alpha(color, .35);
-      ctx.beginPath(); ctx.moveTo(x1, (y1 + y2) / 2); ctx.lineTo(x2, (y1 + y2) / 2); ctx.stroke(); ctx.restore();
-      ctx.setLineDash([]); ctx.strokeStyle = color; ctx.lineWidth = selected ? 3 : 2;
-      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x1, y2); ctx.stroke();
     }
     ctx.restore();
   }
@@ -185,19 +191,28 @@ export class StructureOverlay implements ISeriesPrimitive {
 
   private drawLabel(ctx: CanvasRenderingContext2D, structure: Structure, geometry: StructureGeometry, occupied: LabelBox[]): void {
     const selected = structure.id === this.selectedId;
+    if (geometry.kind === 'zone') {
+      ctx.save();
+      ctx.fillStyle = selected ? '#d1d4dc' : this.color(structure);
+      const box = drawZoneLabel(ctx, structure.type, {
+        left: geometry.x1, top: geometry.y1, right: geometry.x2, bottom: geometry.y2,
+      }, this.viewport);
+      if (box) occupied.push(box);
+      ctx.restore();
+      return;
+    }
     if (!selected && occupied.length >= 20) return;
     const name = structure.type === 'BOS' ? 'BOS · 结构延续' : structure.type === 'CHoCH' ? 'CHoCH · 转向观察'
-      : structure.type === 'FVG' ? 'FVG · 失衡区' : structure.type === 'OB' ? 'OB · 订单区' : structure.type;
+      : structure.type;
     const text = name + (structure.status === 'candidate' ? ' ◇候选' : '');
     const high = structure.type === 'HH' || structure.type === 'LH';
     const { x1, x2, y1 } = geometry;
-    const center = geometry.kind !== 'zone';
-    const x = geometry.kind === 'point' ? x1 : geometry.kind === 'line' ? (x1 + x2) / 2 : x2 - 8;
-    const y = geometry.kind === 'point' ? y1 + (high ? -20 : 22) : geometry.kind === 'line' ? y1 - 11 : y1 + 12;
+    const x = geometry.kind === 'point' ? x1 : (x1 + x2) / 2;
+    const y = geometry.kind === 'point' ? y1 + (high ? -20 : 22) : y1 - 11;
     ctx.save();
     ctx.font = `${selected ? 600 : 500} 10px Arial, "Segoe UI", sans-serif`;
     const width = ctx.measureText(text).width;
-    const left = Math.max(4, Math.min(center ? x - width / 2 : x - width, this.viewport.width - width - 4));
+    const left = Math.max(4, Math.min(x - width / 2, this.viewport.width - width - 4));
     const labelY = Math.max(9, Math.min(y, this.viewport.height - 9));
     const box = { left: left - 4, top: labelY - 7, width: width + 8, height: 14 };
     if (!reserveLabel(box, occupied, selected)) { ctx.restore(); return; }

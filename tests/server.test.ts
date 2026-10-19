@@ -8,6 +8,7 @@ import { validateAnalysis } from '../shared/analysis';
 import type { Candle } from '../shared/market';
 import { SAMPLE_CANDLES } from '../shared/sample';
 import { PA_SAMPLE_CANDLES } from '../shared/paSample';
+import { buildRuleIndicatorReference } from '../shared/indicatorReference';
 
 function candles(length = 40): Candle[] {
   return Array.from({ length }, (_, index) => {
@@ -324,8 +325,12 @@ describe('OpenAI-compatible adapter (stubbed transport, no network or real key)'
     expect(options?.headers).toMatchObject({ Authorization: `Bearer ${configured.apiKey}` });
     const sent = JSON.parse(options?.body as string);
     expect(sent.response_format).toMatchObject({ type: 'json_schema', json_schema: { strict: true, name: 'pa_smc_analysis' } });
-    expect(sent.max_completion_tokens).toBe(6000);
-    expect(JSON.parse(sent.messages[1].content).candles).toEqual(candles());
+    expect(sent.max_completion_tokens).toBe(10000);
+    const payload = JSON.parse(sent.messages[1].content);
+    expect(payload.candles).toEqual(candles());
+    expect(payload.analysisScope).toEqual({ startTime: candles()[0].timestamp, endTime: candles().at(-1)!.timestamp, candleCount: candles().length });
+    expect(payload.reviewWindows.map((window: { candleCount: number }) => window.candleCount).reduce((a: number, b: number) => a + b, 0)).toBe(candles().length);
+    expect(payload.ruleIndicators).toEqual(buildRuleIndicatorReference(candles()));
   });
 
   it('supports explicit JSON mode without a hidden format fallback', async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import {
   ArrowDown, ArrowUp, ArrowUpRight, ArrowsOutSimple, ChartLine, ChartLineUp,
   Check, CheckCircle, Clock, Code, Database, DownloadSimple, FileCsv, GearSix,
@@ -22,7 +22,10 @@ import { getHealth, requestAnalysis, type AnalysisSource, type Health } from './
 import { DEFAULT_LIVE_QUERY, resolveStartup } from './startup';
 import { analysisDatasetKey, createAnalysisSnapshot, inspectAnalysisSnapshot, projectAnalysisForCandles, type AnalysisSnapshot } from './analysisSession';
 import { AnalysisStatus, type AnalysisTask } from './components/AnalysisStatus';
+import { AnalysisCoverage } from './components/AnalysisCoverage';
 import { selectAnalysisCandles } from './analysisRange';
+import { detectRuleIndicators } from '../shared/indicators';
+import { RuleIndicatorsPanel, visibleRuleIndicatorZones, type RuleIndicatorVisibility } from './components/RuleIndicatorsPanel';
 
 const money = formatPrice;
 const compact = (n: number) => Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(n);
@@ -67,6 +70,8 @@ export default function App() {
   const [selectedSetupId, setSelectedSetupId] = useState<string | null>(null);
   const [selectedSweepId, setSelectedSweepId] = useState<string | null>(null);
   const [selectedPAId, setSelectedPAId] = useState<string | null>(null);
+  const [selectedIndicatorId, setSelectedIndicatorId] = useState<string | null>(null);
+  const [indicatorVisibility, setIndicatorVisibility] = useState<RuleIndicatorVisibility>({ FVG: true, OB: true, history: false });
   const [chartView, setChartView] = useState<'pa' | 'smc' | 'combined'>('pa');
   const [visiblePALayers, setVisiblePALayers] = useState({ zones: true, legs: true, patterns: true, breakouts: true });
   const [showTradeSetups, setShowTradeSetups] = useState(true);
@@ -107,6 +112,11 @@ export default function App() {
     }
   });
   const availableAnalysisCandles = marketSnapshot && dataset.source === 'live' ? closedMarketCandles(marketSnapshot) : candles;
+  const ruleIndicators = useMemo(() => detectRuleIndicators(availableAnalysisCandles), [availableAnalysisCandles]);
+  const indicatorZones = visibleRuleIndicatorZones(ruleIndicators, indicatorVisibility);
+  useEffect(() => {
+    if (selectedIndicatorId && !indicatorZones.some(zone => zone.id === selectedIndicatorId)) setSelectedIndicatorId(null);
+  }, [selectedIndicatorId, indicatorZones]);
   const analysisCandles = selectionMode === 'auto' ? availableAnalysisCandles.slice(-MAX_ANALYSIS_CANDLES)
     : selectAnalysisCandles(availableAnalysisCandles, selectedRange);
   const missingRangeBoundary = selectionMode === 'manual' && selectedRange !== null
@@ -175,7 +185,7 @@ export default function App() {
   function resetAnalysisDataset(identity: string) {
     activeDatasetKey.current = identity;
     cancelAnalysis(false); setEnvelope(null); setResultSnapshot(null); setAnalysisTask({ phase: 'idle', snapshot: null, message: '' });
-    setSelectedId(null); setSelectedSetupId(null); setSelectedSweepId(null); setSelectedPAId(null);
+    setSelectedId(null); setSelectedSetupId(null); setSelectedSweepId(null); setSelectedPAId(null); setSelectedIndicatorId(null);
     setSelectedRange(null); setIsSelectingRange(false); setError(''); setNotice('');
   }
   function disconnectMarket() {
@@ -202,6 +212,7 @@ export default function App() {
     if (marketSnapshot) connectMarket({ symbol: marketSnapshot.symbol, interval, limit: 300 });
   }
   function selectStructure(structure: Structure, source: 'chart' | 'list' = 'list') {
+    setSelectedIndicatorId(null);
     setSelectedId(structure.id);
     setSelectedSetupId(null); setSelectedSweepId(null); setSelectedPAId(null);
     if (chartView === 'pa') setChartView('smc');
@@ -211,15 +222,18 @@ export default function App() {
     if (source === 'list') chartPanelRef.current?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }
   function selectSetup(setup: TradeSetup, source: 'chart' | 'list' = 'list') {
+    setSelectedIndicatorId(null);
     setSelectedSetupId(setup.id); setSelectedId(null); setSelectedSweepId(null); setSelectedPAId(null); setShowTradeSetups(true); setTab('opportunities');
     if (source === 'list') chartPanelRef.current?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }
   function selectSweep(sweep: LiquiditySweep, source: 'chart' | 'list' = 'list') {
+    setSelectedIndicatorId(null);
     setSelectedSweepId(sweep.id); setSelectedId(null); setSelectedSetupId(null); setSelectedPAId(null); setShowLiquiditySweeps(true); setTab('liquidity');
     if (chartView === 'pa') setChartView('smc');
     if (source === 'list') chartPanelRef.current?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }
   function selectPA(id: string, source: 'chart' | 'list' = 'list') {
+    setSelectedIndicatorId(null);
     const evidence = getPAEvidence(analysis?.priceAction).find(entry => entry.item.id === id);
     if (!evidence) return;
     setSelectedPAId(id); setSelectedId(null); setSelectedSetupId(null); setSelectedSweepId(null);
@@ -234,7 +248,20 @@ export default function App() {
     if (view === 'pa') { setSelectedId(null); setSelectedSweepId(null); }
     if (view === 'smc') setSelectedPAId(null);
   }
+  function selectIndicator(id: string) {
+    const zone = ruleIndicators.zones.find(item => item.id === id);
+    if (!zone) return;
+    setSelectedIndicatorId(id);
+    setSelectedId(null); setSelectedSetupId(null); setSelectedSweepId(null); setSelectedPAId(null);
+    setIndicatorVisibility(current => ({ ...current, [zone.type]: true,
+      history: current.history || zone.status === 'filled' || zone.status === 'invalidated' }));
+  }
+  function changeIndicatorVisibility(next: RuleIndicatorVisibility) {
+    setIndicatorVisibility(next);
+    if (!visibleRuleIndicatorZones(ruleIndicators, next).some(zone => zone.id === selectedIndicatorId)) setSelectedIndicatorId(null);
+  }
   function resetChart() {
+    setSelectedIndicatorId(null);
     setSelectedId(null); setSelectedSetupId(null); setSelectedSweepId(null); setSelectedPAId(null);
     setResetToken(value => value + 1);
   }
@@ -402,6 +429,7 @@ export default function App() {
           <section ref={chartPanelRef} className="chart-panel panel" aria-label="价格与结构图表">
             <div className="panel-toolbar chart-topbar"><div className="panel-title"><ChartLine size={19}/><h2>行情图表</h2></div><div className="chart-intervals" aria-label="图表周期">{dataset.source === 'live' ? LIVE_INTERVALS.map(interval => <button key={interval} aria-label={`切换到 ${interval} 周期`} aria-pressed={marketSnapshot?.interval === interval} disabled={feed.loading} onClick={() => changeLiveInterval(interval)}>{interval.toUpperCase()}</button>) : <span>{dataset.timeframe}</span>}</div><div className="chart-tools"><span className={`chart-connection ${feed.transport === 'streaming' && dataset.source === 'live' ? 'is-streaming' : ''}`}>{dataset.source === 'live' ? feed.transport === 'streaming' ? '实时' : feed.transport === 'paused' ? '已暂停' : '同步中' : dataset.synthetic ? 'DEMO' : 'CSV'}</span><button className="icon-button" aria-label="重置图表视图" title="显示近期 K 线" onClick={resetChart}><Pulse size={17}/></button><button className="icon-button" aria-label={chartExpanded ? '退出专注图表' : '专注图表'} aria-pressed={chartExpanded} title="切换专注图表" onClick={() => setChartExpanded(v => !v)}><ArrowsOutSimple size={17}/></button></div></div>
             <AnalysisStatus {...taskStatusProps} compact/>
+            {envelope && resultSnapshot && <AnalysisCoverage analysis={envelope.analysis} candles={resultSnapshot.candles}/>}
             <div className="analysis-range-toolbar" aria-label="分析 K 线范围">
               <div className="analysis-range-mode" role="group" aria-label="分析范围方式"><button aria-label="自动范围" aria-pressed={selectionMode === 'auto'} disabled={busy} onClick={() => { setSelectionMode('auto'); setIsSelectingRange(false); }}>自动范围</button><button aria-label="手动范围" aria-pressed={selectionMode === 'manual'} disabled={busy} onClick={() => { setSelectionMode('manual'); setIsSelectingRange(false); }}>手动范围</button></div>
               {selectionMode === 'auto' ? <span>自动 · 最近最多 {MAX_ANALYSIS_CANDLES} 根{dataset.source === 'live' ? '已收盘 ' : ''}K 线</span> : <button className={`range-drag-button ${isSelectingRange ? 'is-active' : ''}`} aria-label="在图表拖选范围" aria-pressed={isSelectingRange} disabled={busy || !availableAnalysisCandles.length} onClick={() => setIsSelectingRange(value => !value)}>{isSelectingRange ? '正在框选 · 再点退出' : '在图表拖选范围'}</button>}
@@ -413,8 +441,10 @@ export default function App() {
             {chartView !== 'smc' && <div className="pa-layer-bar" aria-label="PA 图层显示开关"><span className="filter-caption">PA</span>{paLayers.map(({ layer, label, count }) => <label key={layer}><input type="checkbox" checked={visiblePALayers[layer]} onChange={event => setVisiblePALayers(current => ({ ...current, [layer]: event.target.checked }))}/><span className={`pa-layer-swatch ${layer}`}/>{label}<small>{count}</small></label>)}</div>}
             {chartView !== 'pa' && <div className="filter-bar" aria-label="结构显示开关"><span className="filter-caption">SMC</span><div className="filter-chips">{STRUCTURE_TYPES.map(type => <button key={type} className={`filter-chip type-${type.toLowerCase()} ${visibleTypes.includes(type) ? 'enabled' : ''}`} aria-pressed={visibleTypes.includes(type)} title={structureNames[type]} onClick={() => setVisibleTypes(v => v.includes(type) ? v.filter(t => t !== type) : [...v, type])}><span className="chip-indicator"/>{type}</button>)}</div></div>}
             <div className="advanced-layer-bar" aria-label="交易情景与流动性图层"><label><input type="checkbox" checked={showTradeSetups} onChange={event => setShowTradeSetups(event.target.checked)}/><span className="advanced-layer-swatch trade-swatch"/>开仓候选 / 盈亏区间<span className="advanced-layer-count">{analysis?.tradeSetups.length ?? 0}</span></label>{chartView !== 'pa' && <label><input type="checkbox" checked={showLiquiditySweeps} onChange={event => setShowLiquiditySweeps(event.target.checked)}/><span className="advanced-layer-swatch sweep-swatch"/>流动性扫除<span className="advanced-layer-count">{analysis?.liquiditySweeps.length ?? 0}</span></label>}</div>
+            <RuleIndicatorsPanel snapshot={ruleIndicators} visibility={indicatorVisibility} onVisibilityChange={changeIndicatorVisibility} selectedId={selectedIndicatorId} onSelect={selectIndicator}/>
             {candles.length > 0 ? (
-            <TradingChart candles={candles} structures={showCandidates ? structures : structures.filter(s => s.status === 'confirmed')} visibleTypes={visibleTypes} selectedId={selectedId} onSelect={id => { const s = structures.find(item => item.id === id); if (s) selectStructure(s, 'chart'); }} priceAction={displayedPriceAction} visiblePALayers={visiblePALayers} showPA={chartView !== 'smc'} showSMC={chartView !== 'pa'} selectedPAId={selectedPAId} onSelectPA={id => selectPA(id, 'chart')} tradeSetups={analysis?.tradeSetups ?? []} liquiditySweeps={analysis?.liquiditySweeps ?? []} showTradeSetups={showTradeSetups} showLiquiditySweeps={showLiquiditySweeps && chartView !== 'pa'} selectedSetupId={selectedSetupId} selectedSweepId={selectedSweepId} onSelectSetup={id => { const setup = analysis?.tradeSetups.find(item => item.id === id); if (setup) selectSetup(setup, 'chart'); }} onSelectSweep={id => { const sweep = analysis?.liquiditySweeps.find(item => item.id === id); if (sweep) selectSweep(sweep, 'chart'); }} resetToken={resetToken} datasetKey={`${dataset.source}:${dataset.name}:${dataset.timeframe}:${dataset.file}`} symbol={dataset.name} timeframe={dataset.timeframe} exchange={dataset.source === 'live' ? 'BINANCE' : dataset.synthetic ? '合成示例' : 'CSV'} rangeSelectionEnabled={selectionMode === 'manual' && isSelectingRange} selectedRange={selectionMode === 'manual' ? selectedRange : null} onSelectRange={range => { if (!busy) { setSelectedRange(range); setIsSelectingRange(false); } }} selectableCandles={availableAnalysisCandles} selectionDisabled={busy}/>
+            <TradingChart candles={candles} indicatorZones={indicatorZones} selectedIndicatorId={selectedIndicatorId} onSelectIndicator={selectIndicator}
+              structures={showCandidates ? structures : structures.filter(s => s.status === 'confirmed')} visibleTypes={visibleTypes} selectedId={selectedId} onSelect={id => { const s = structures.find(item => item.id === id); if (s) selectStructure(s, 'chart'); }} priceAction={displayedPriceAction} visiblePALayers={visiblePALayers} showPA={chartView !== 'smc'} showSMC={chartView !== 'pa'} selectedPAId={selectedPAId} onSelectPA={id => selectPA(id, 'chart')} tradeSetups={analysis?.tradeSetups ?? []} liquiditySweeps={analysis?.liquiditySweeps ?? []} showTradeSetups={showTradeSetups} showLiquiditySweeps={showLiquiditySweeps && chartView !== 'pa'} selectedSetupId={selectedSetupId} selectedSweepId={selectedSweepId} onSelectSetup={id => { const setup = analysis?.tradeSetups.find(item => item.id === id); if (setup) selectSetup(setup, 'chart'); }} onSelectSweep={id => { const sweep = analysis?.liquiditySweeps.find(item => item.id === id); if (sweep) selectSweep(sweep, 'chart'); }} resetToken={resetToken} datasetKey={`${dataset.source}:${dataset.name}:${dataset.timeframe}:${dataset.file}`} symbol={dataset.name} timeframe={dataset.timeframe} exchange={dataset.source === 'live' ? 'BINANCE' : dataset.synthetic ? '合成示例' : 'CSV'} rangeSelectionEnabled={selectionMode === 'manual' && isSelectingRange} selectedRange={selectionMode === 'manual' ? selectedRange : null} onSelectRange={range => { if (!busy) { setSelectedRange(range); setIsSelectingRange(false); } }} selectableCandles={availableAnalysisCandles} selectionDisabled={busy}/>
             ) : <div className="empty-state" role="status" aria-label="真实行情等待状态">{feed.error ? <WarningCircle size={32}/> : <SpinnerGap size={32} className="spin"/>}<h3>{feed.error ? '真实行情暂不可用' : '正在连接真实行情…'}</h3><p>{feed.error ? '请检查网络连接并重试。当前没有可显示的真实行情。' : `正在获取 ${dataset.name} · ${dataset.timeframe} 的交易所 K 线。`}</p><button className="button secondary" onClick={loadRealMarket} disabled={feed.loading}>{feed.loading ? '连接中…' : '重试真实行情'}</button></div>}
             <div className="chart-footer"><span className="chart-status-legend">{chartView === 'smc' ? <><span className="line-sample"/>已确认结构<span className="line-sample dashed"/>候选结构</> : <>区域为价格带 · 回撤为虚线路径 · ◇为候选</>}</span><label className="candidate-switch"><input type="checkbox" checked={showCandidates} onChange={e => setShowCandidates(e.target.checked)}/><span className="switch-track"/>显示候选</label><span className="chart-hint">滚轮缩放 · 拖拽平移</span></div>
           </section>

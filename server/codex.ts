@@ -8,7 +8,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { analysisJsonSchema } from '../shared/analysis';
 import { MAX_ANALYSIS_CANDLES, validateCandles } from '../shared/market';
 import { invalidModelOutput, PublicError } from './errors';
-import { SYSTEM_PROMPT, type AnalysisProvider, type ModelInput } from './provider';
+import { buildAnalysisPayload, SYSTEM_PROMPT, type AnalysisProvider, type ModelInput } from './provider';
 
 export interface CodexStatus {
   available: boolean;
@@ -376,10 +376,7 @@ export class CodexAnalysisProvider implements AnalysisProvider, CodexProvider {
       for (const [key, value] of Object.entries(settings)) args.push('--config', `${key}=${JSON.stringify(value)}`);
       if (this.config.model) args.push('--model', this.config.model);
       args.push('-');
-      const prompt = JSON.stringify({
-        task: '依据 JSON Schema 分析以下行情，输出研究结论和可精确映射的 PA/SMC 结构。',
-        timestampUnit: 'UTC Unix seconds', context: input.context, candles: input.candles,
-      });
+      const prompt = JSON.stringify(buildAnalysisPayload(input));
       const result = await this.run({
         command: binary, args, cwd: directory, env: this.environment(), input: prompt,
         timeoutMs: this.config.timeoutMs ?? 180_000, signal,

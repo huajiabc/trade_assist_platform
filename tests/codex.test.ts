@@ -7,6 +7,7 @@ import {
   type CodexProcessRequest, type CodexProcessRunner,
 } from '../server/codex';
 import type { ModelInput } from '../server/provider';
+import { buildRuleIndicatorReference } from '../shared/indicatorReference';
 import { SAMPLE_CANDLES } from '../shared/sample';
 import { createMockAnalysis } from '../shared/mock';
 
@@ -95,7 +96,11 @@ describe('Codex subscription adapter', () => {
         'features.skip_host_skill_discovery=true', 'web_search="disabled"',
       ]));
       expect(request.args).not.toContain('SNDKUSDT');
-      expect(JSON.parse(request.input)).toMatchObject({ context: input.context, candles: input.candles });
+      const payload = JSON.parse(request.input);
+      expect(payload).toMatchObject({ context: input.context, candles: input.candles,
+        analysisScope: { startTime: input.candles[0].timestamp, endTime: input.candles.at(-1)!.timestamp, candleCount: 40 } });
+      expect(payload.reviewWindows.map((window: { candleCount: number }) => window.candleCount)).toEqual([13, 13, 14]);
+      expect(payload.ruleIndicators).toEqual(buildRuleIndicatorReference(input.candles));
       expect(request.cwd).not.toBe(process.cwd());
       const schemaFile = request.args[request.args.indexOf('--output-schema') + 1];
       expect(JSON.parse(await readFile(schemaFile, 'utf8'))).toHaveProperty('properties.structures');

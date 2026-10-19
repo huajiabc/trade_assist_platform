@@ -17,6 +17,7 @@ import {
 import type { Candle } from '../../shared/market';
 import type { LiquiditySweep, Structure, StructureType, TradeSetup } from '../../shared/analysis';
 import type { PriceAction } from '../../shared/priceAction';
+import type { RuleIndicatorZone } from '../../shared/indicators';
 import { formatPrice } from '../../shared/format';
 import { nearestCandleIndex, structureFocusRange } from '../chart/coordinates';
 import { StructureOverlay } from '../chart/StructureOverlay';
@@ -27,6 +28,8 @@ import { tradeSetupFocusRange } from '../chart/tradeCoordinates';
 import { PriceActionOverlay } from '../chart/PriceActionOverlay';
 import { ALL_PA_LAYERS, findPAItem, paFocusRange, paItemBounds, type PALayerVisibility } from '../chart/priceActionCoordinates';
 import { AnalysisRangeOverlay } from '../chart/AnalysisRangeOverlay';
+import { IndicatorOverlay } from '../chart/IndicatorOverlay';
+import { indicatorDisplayEndTime, indicatorFocusRange } from '../chart/indicatorCoordinates';
 import { analysisRangeFromCoordinates, normalizeAnalysisRange, type AnalysisRange } from '../analysisRange';
 
 interface TradingChartProps {
@@ -61,6 +64,10 @@ interface TradingChartProps {
   /** Closed candles eligible for analysis; the forming tail cannot be selected. */
   selectableCandles?: Candle[];
   selectionDisabled?: boolean;
+  /** Rule-derived context remains independent of any AI analysis result. */
+  indicatorZones?: RuleIndicatorZone[];
+  selectedIndicatorId?: string | null;
+  onSelectIndicator?: (id: string) => void;
 }
 
 interface ChartState {
@@ -71,6 +78,7 @@ interface ChartState {
   tradeOverlay: TradeOverlay;
   paOverlay: PriceActionOverlay;
   rangeOverlay: AnalysisRangeOverlay;
+  indicatorOverlay: IndicatorOverlay;
   priceMultiplier: number;
 }
 
@@ -83,6 +91,7 @@ export function TradingChart({
   selectedSetupId = null, selectedSweepId = null, onSelectSetup, onSelectSweep,
   priceAction, visiblePALayers = ALL_PA_LAYERS, showSMC = true, showPA = true, selectedPAId = null, onSelectPA,
   rangeSelectionEnabled = false, selectedRange = null, onSelectRange, selectableCandles = candles, selectionDisabled = false,
+  indicatorZones = [], selectedIndicatorId = null, onSelectIndicator,
 }: TradingChartProps) {
   const host = useRef<HTMLDivElement>(null);
   const api = useRef<ChartState | null>(null);
@@ -91,6 +100,7 @@ export function TradingChart({
   const onSelectSetupRef = useRef(onSelectSetup);
   const onSelectSweepRef = useRef(onSelectSweep);
   const onSelectPARef = useRef(onSelectPA);
+  const onSelectIndicatorRef = useRef(onSelectIndicator);
   const rangeSelectionEnabledRef = useRef(false);
   const selectionAnchor = useRef<number | null>(null);
   const pointerSelection = useRef<{ pointerId: number; startX: number; anchor: number; secondClick: boolean } | null>(null);
@@ -107,12 +117,14 @@ export function TradingChart({
   const selectedPA = showPA ? findPAItem(priceAction, selectedPAId) : undefined;
   const selectedPABounds = selectedPA && priceAction ? paItemBounds(selectedPA, priceAction, candles) : null;
   const selectedPAPrices = selectedPABounds?.prices.join(',');
+  const selectedIndicator = indicatorZones.find(zone => zone.id === selectedIndicatorId);
   const activeSetupTargets = activeSetup?.targets.map((target) => target.price).join(',');
   candleRef.current = candles;
   onSelectRef.current = onSelect;
   onSelectSetupRef.current = onSelectSetup;
   onSelectSweepRef.current = onSelectSweep;
   onSelectPARef.current = onSelectPA;
+  onSelectIndicatorRef.current = onSelectIndicator;
   rangeSelectionEnabledRef.current = rangeSelectionEnabled && !selectionDisabled;
 
   useEffect(() => {
@@ -158,7 +170,9 @@ export function TradingChart({
     series.attachPrimitive(paOverlay);
     const rangeOverlay = new AnalysisRangeOverlay();
     series.attachPrimitive(rangeOverlay);
-    api.current = { chart, series, volume, overlay, tradeOverlay, paOverlay, rangeOverlay, priceMultiplier: 1 };
+    const indicatorOverlay = new IndicatorOverlay();
+    series.attachPrimitive(indicatorOverlay);
+    api.current = { chart, series, volume, overlay, tradeOverlay, paOverlay, rangeOverlay, indicatorOverlay, priceMultiplier: 1 };
     let sizeFrame = 0;
     const updateRangePaneSize = () => {
       const size = chart.paneSize(0);
@@ -192,10 +206,12 @@ export function TradingChart({
         onSelectSweepRef.current?.(tradeHit.externalId.slice(6));
         return;
       }
+      const indicatorHit = event.point ? indicatorOverlay.hitTest(event.point.x, event.point.y) : null;
+      if (indicatorHit) { onSelectIndicatorRef.current?.(indicatorHit.externalId.slice('indicator:'.length)); return; }
       const paHit = event.point ? paOverlay.hitTest(event.point.x, event.point.y) : null;
       if (paHit) { onSelectPARef.current?.(paHit.externalId.slice(3)); return; }
       const hit = event.point ? overlay.hitTest(event.point.x, event.point.y) : null;
-      if (hit) onSelectRef.current(hit.externalId);
+      if (hit) { onSelectRef.current(hit.externalId); return; }
     });
     return () => {
       rangeResizeObserver.disconnect();
@@ -205,6 +221,7 @@ export function TradingChart({
       series.detachPrimitive(tradeOverlay);
       series.detachPrimitive(paOverlay);
       series.detachPrimitive(rangeOverlay);
+      series.detachPrimitive(indicatorOverlay);
       chart.remove();
       api.current = null;
       loadedData.current = null;
@@ -258,6 +275,7 @@ export function TradingChart({
     state.overlay.setPriceMultiplier(multiplier);
     state.tradeOverlay.setPriceMultiplier(multiplier);
     state.paOverlay.setPriceMultiplier(multiplier);
+    state.indicatorOverlay.setPriceMultiplier(multiplier);
     state.series.applyOptions({ priceFormat: format });
     const candleData = (candle: Candle) => ({
       time: candle.timestamp as UTCTimestamp,
@@ -296,16 +314,20 @@ export function TradingChart({
   }, [candles, datasetKey]);
 
   useEffect(() => {
-    api.current?.overlay.setData(showSMC ? structures.filter((structure) => visibleTypes.includes(structure.type)) : [], selectedId, candles, Boolean(selectedPAId));
-  }, [structures, visibleTypes, selectedId, showSMC, candles, selectedPAId]);
+    api.current?.overlay.setData(showSMC ? structures.filter((structure) => visibleTypes.includes(structure.type)) : [], selectedId, candles, Boolean(selectedPAId || selectedIndicatorId));
+  }, [structures, visibleTypes, selectedId, showSMC, candles, selectedPAId, selectedIndicatorId]);
 
   useEffect(() => {
-    api.current?.paOverlay.setData(candles, showPA ? priceAction : undefined, visiblePALayers, selectedPAId, Boolean(selectedId || selectedSweepId || selectedSetupId));
-  }, [candles, priceAction, visiblePALayers, showPA, selectedPAId, selectedId, selectedSweepId, selectedSetupId]);
+    api.current?.paOverlay.setData(candles, showPA ? priceAction : undefined, visiblePALayers, selectedPAId, Boolean(selectedId || selectedSweepId || selectedSetupId || selectedIndicatorId));
+  }, [candles, priceAction, visiblePALayers, showPA, selectedPAId, selectedId, selectedSweepId, selectedSetupId, selectedIndicatorId]);
 
   useEffect(() => {
-    api.current?.tradeOverlay.setData(activeSetup ?? null, showLiquiditySweeps ? liquiditySweeps : [], selectedSweepId, Boolean(selectedPAId || selectedId));
-  }, [activeSetup, liquiditySweeps, showLiquiditySweeps, selectedSweepId, selectedPAId, selectedId]);
+    api.current?.tradeOverlay.setData(activeSetup ?? null, showLiquiditySweeps ? liquiditySweeps : [], selectedSweepId, Boolean(selectedPAId || selectedId || selectedIndicatorId));
+  }, [activeSetup, liquiditySweeps, showLiquiditySweeps, selectedSweepId, selectedPAId, selectedId, selectedIndicatorId]);
+
+  useEffect(() => {
+    api.current?.indicatorOverlay.setData(indicatorZones, selectedIndicatorId, candles);
+  }, [indicatorZones, selectedIndicatorId, candles]);
 
   useEffect(() => {
     const state = api.current;
@@ -313,7 +335,9 @@ export function TradingChart({
     if (!state || !selected) return;
     // Polling recreates candle/structure arrays. Only an actual selection or
     // changed structure anchor should re-focus a user-panned viewport.
-    const range = structureFocusRange(candles, selected);
+    const displayEnd = selected.type === 'FVG' || selected.type === 'OB'
+      ? indicatorDisplayEndTime({ formedAt: selected.startTime, endTime: selected.endTime }, candles) : selected.endTime;
+    const range = displayEnd === null ? null : structureFocusRange(candles, { startTime: selected.startTime, endTime: displayEnd });
     if (!range) return;
     state.chart.timeScale().setVisibleLogicalRange(range);
     state.series.priceScale().applyOptions({ autoScale: true });
@@ -330,7 +354,7 @@ export function TradingChart({
     const state = api.current;
     // A fallback setup stays visible while inspecting PA or a sweep, but must
     // never move the viewport away from that explicit selection.
-    if (!state || !activeSetup || selectedId || selectedSweepId || selectedPAId) return;
+    if (!state || !activeSetup || selectedId || selectedSweepId || selectedPAId || selectedIndicatorId) return;
     const range = tradeSetupFocusRange(candles, activeSetup);
     if (!range) return;
     state.chart.timeScale().setVisibleLogicalRange(range);
@@ -342,7 +366,23 @@ export function TradingChart({
     });
     return () => cancelAnimationFrame(frame);
     // Only changed anchors/levels refocus, never ordinary forming-candle ticks.
-  }, [activeSetup?.id, activeSetup?.anchorTime, activeSetup?.entry, activeSetup?.stopLoss, activeSetupTargets, selectedSetupId, selectedId, selectedSweepId, selectedPAId, datasetKey]);
+  }, [activeSetup?.id, activeSetup?.anchorTime, activeSetup?.entry, activeSetup?.stopLoss, activeSetupTargets, selectedSetupId, selectedId, selectedSweepId, selectedPAId, selectedIndicatorId, datasetKey]);
+
+  useEffect(() => {
+    const state = api.current;
+    if (!state || !selectedIndicator) return;
+    const range = indicatorFocusRange(candles, selectedIndicator);
+    if (!range) return;
+    state.chart.timeScale().setVisibleLogicalRange(range);
+    state.series.priceScale().applyOptions({ autoScale: true });
+    const frame = requestAnimationFrame(() => {
+      state.chart.setCrosshairPosition(selectedIndicator.midpoint * state.priceMultiplier, selectedIndicator.formedAt as UTCTimestamp, state.series);
+      const index = nearestCandleIndex(candles, selectedIndicator.formedAt);
+      if (index >= 0) setHovered(candles[index]);
+    });
+    return () => cancelAnimationFrame(frame);
+    // Extended endTime, mitigation and status change on live closes, not selection.
+  }, [selectedIndicator?.id, selectedIndicator?.originTime, selectedIndicator?.formedAt, selectedIndicator?.lowerPrice, selectedIndicator?.upperPrice, datasetKey]);
 
   useEffect(() => {
     const state = api.current;
