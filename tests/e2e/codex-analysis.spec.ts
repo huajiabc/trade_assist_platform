@@ -71,10 +71,10 @@ test('cancelling a Codex request unlocks controls and does not render a late res
   await page.goto('/?demo=smc');
   await expect(page.getByLabel('分析来源', { exact: true })).toHaveValue('codex');
   await page.getByRole('button', { name: /AI 分析/ }).first().click();
-  await expect(page.locator('.analysis-progress')).toBeVisible();
+  await expect(page.getByLabel('图表分析状态')).toContainText('正在分析');
   await expect(page.getByLabel('分析来源', { exact: true })).toBeDisabled();
-  await page.locator('.analysis-progress').getByRole('button', { name: '取消' }).click();
-  await expect(page.locator('.analysis-progress')).toBeHidden();
+  await page.getByLabel('图表分析状态').getByRole('button', { name: '取消分析', exact: true }).click();
+  await expect(page.getByLabel('图表分析状态')).toContainText('分析已取消');
   await expect(page.getByLabel('分析来源', { exact: true })).toBeEnabled();
   releaseResponse();
   await handled;

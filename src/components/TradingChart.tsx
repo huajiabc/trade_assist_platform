@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+// @refresh reset
+// Native chart primitives must be recreated when their renderer changes in development.
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import {
   CandlestickSeries,
   ColorType,
@@ -9,6 +11,7 @@ import {
   createChart,
   type IChartApi,
   type ISeriesApi,
+  type Coordinate,
   type UTCTimestamp,
 } from 'lightweight-charts';
 import type { Candle } from '../../shared/market';
@@ -23,6 +26,8 @@ import { TradeOverlay } from '../chart/TradeOverlay';
 import { tradeSetupFocusRange } from '../chart/tradeCoordinates';
 import { PriceActionOverlay } from '../chart/PriceActionOverlay';
 import { ALL_PA_LAYERS, findPAItem, paFocusRange, paItemBounds, type PALayerVisibility } from '../chart/priceActionCoordinates';
+import { AnalysisRangeOverlay } from '../chart/AnalysisRangeOverlay';
+import { analysisRangeFromCoordinates, normalizeAnalysisRange, type AnalysisRange } from '../analysisRange';
 
 interface TradingChartProps {
   candles: Candle[];
@@ -50,6 +55,12 @@ interface TradingChartProps {
   showPA?: boolean;
   selectedPAId?: string | null;
   onSelectPA?: (id: string) => void;
+  rangeSelectionEnabled?: boolean;
+  selectedRange?: AnalysisRange | null;
+  onSelectRange?: (range: AnalysisRange) => void;
+  /** Closed candles eligible for analysis; the forming tail cannot be selected. */
+  selectableCandles?: Candle[];
+  selectionDisabled?: boolean;
 }
 
 interface ChartState {
@@ -59,6 +70,7 @@ interface ChartState {
   overlay: StructureOverlay;
   tradeOverlay: TradeOverlay;
   paOverlay: PriceActionOverlay;
+  rangeOverlay: AnalysisRangeOverlay;
   priceMultiplier: number;
 }
 
@@ -70,6 +82,7 @@ export function TradingChart({
   tradeSetups = [], liquiditySweeps = [], showTradeSetups = true, showLiquiditySweeps = true,
   selectedSetupId = null, selectedSweepId = null, onSelectSetup, onSelectSweep,
   priceAction, visiblePALayers = ALL_PA_LAYERS, showSMC = true, showPA = true, selectedPAId = null, onSelectPA,
+  rangeSelectionEnabled = false, selectedRange = null, onSelectRange, selectableCandles = candles, selectionDisabled = false,
 }: TradingChartProps) {
   const host = useRef<HTMLDivElement>(null);
   const api = useRef<ChartState | null>(null);
@@ -78,6 +91,12 @@ export function TradingChart({
   const onSelectSetupRef = useRef(onSelectSetup);
   const onSelectSweepRef = useRef(onSelectSweep);
   const onSelectPARef = useRef(onSelectPA);
+  const rangeSelectionEnabledRef = useRef(false);
+  const selectionAnchor = useRef<number | null>(null);
+  const pointerSelection = useRef<{ pointerId: number; startX: number; anchor: number; secondClick: boolean } | null>(null);
+  const [rangePreview, setRangePreview] = useState<AnalysisRange | null>(null);
+  const [rangePaneSize, setRangePaneSize] = useState({ width: 0, height: 0 });
+  const [awaitingRangeEnd, setAwaitingRangeEnd] = useState(false);
   const loadedData = useRef<{ candles: Candle[]; datasetKey: string } | null>(null);
   const [hovered, setHovered] = useState<Candle | null>(null);
   const [magnet, setMagnet] = useState(true);
@@ -94,6 +113,7 @@ export function TradingChart({
   onSelectSetupRef.current = onSelectSetup;
   onSelectSweepRef.current = onSelectSweep;
   onSelectPARef.current = onSelectPA;
+  rangeSelectionEnabledRef.current = rangeSelectionEnabled && !selectionDisabled;
 
   useEffect(() => {
     if (!host.current) return;
@@ -136,7 +156,24 @@ export function TradingChart({
     series.attachPrimitive(tradeOverlay);
     const paOverlay = new PriceActionOverlay();
     series.attachPrimitive(paOverlay);
-    api.current = { chart, series, volume, overlay, tradeOverlay, paOverlay, priceMultiplier: 1 };
+    const rangeOverlay = new AnalysisRangeOverlay();
+    series.attachPrimitive(rangeOverlay);
+    api.current = { chart, series, volume, overlay, tradeOverlay, paOverlay, rangeOverlay, priceMultiplier: 1 };
+    let sizeFrame = 0;
+    const updateRangePaneSize = () => {
+      const size = chart.paneSize(0);
+      setRangePaneSize((current) => current.width === size.width && current.height === size.height ? current : size);
+    };
+    const queueRangePaneSize = () => {
+      cancelAnimationFrame(sizeFrame);
+      sizeFrame = requestAnimationFrame(updateRangePaneSize);
+    };
+    const rangeResizeObserver = new ResizeObserver(queueRangePaneSize);
+    rangeResizeObserver.observe(host.current);
+    const paneElement = chart.panes()[0].getHTMLElement();
+    if (paneElement) rangeResizeObserver.observe(paneElement);
+    chart.timeScale().subscribeSizeChange(queueRangePaneSize);
+    queueRangePaneSize();
 
     chart.subscribeCrosshairMove((event) => {
       if (typeof event.time !== 'number') { setHovered(null); return; }
@@ -144,6 +181,7 @@ export function TradingChart({
       setHovered(index >= 0 ? candleRef.current[index] : null);
     });
     chart.subscribeClick((event) => {
+      if (rangeSelectionEnabledRef.current) return;
       if (event.paneIndex !== 0) return;
       const tradeHit = event.point ? tradeOverlay.hitTest(event.point.x, event.point.y) : null;
       if (tradeHit?.externalId.startsWith('setup:')) {
@@ -160,14 +198,49 @@ export function TradingChart({
       if (hit) onSelectRef.current(hit.externalId);
     });
     return () => {
+      rangeResizeObserver.disconnect();
+      cancelAnimationFrame(sizeFrame);
+      chart.timeScale().unsubscribeSizeChange(queueRangePaneSize);
       series.detachPrimitive(overlay);
       series.detachPrimitive(tradeOverlay);
       series.detachPrimitive(paOverlay);
+      series.detachPrimitive(rangeOverlay);
       chart.remove();
       api.current = null;
       loadedData.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    api.current?.rangeOverlay.setData(selectableCandles, rangePreview ?? selectedRange, Boolean(rangePreview));
+  }, [selectableCandles, selectedRange, rangePreview]);
+
+  useEffect(() => {
+    if (rangeSelectionEnabled && !selectionDisabled) return;
+    selectionAnchor.current = null;
+    pointerSelection.current = null;
+    setAwaitingRangeEnd(false);
+    setRangePreview(null);
+  }, [rangeSelectionEnabled, selectionDisabled, datasetKey]);
+
+  useEffect(() => {
+    selectionAnchor.current = null;
+    pointerSelection.current = null;
+    setAwaitingRangeEnd(false);
+    setRangePreview(null);
+  }, [datasetKey]);
+
+  useEffect(() => {
+    if (!rangeSelectionEnabled || selectionDisabled) return;
+    const cancelPreview = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || (!selectionAnchor.current && !pointerSelection.current)) return;
+      event.preventDefault(); event.stopPropagation();
+      selectionAnchor.current = null; pointerSelection.current = null;
+      setAwaitingRangeEnd(false); setRangePreview(null);
+    };
+    window.addEventListener('keydown', cancelPreview, true);
+    return () => window.removeEventListener('keydown', cancelPreview, true);
+  }, [rangeSelectionEnabled, selectionDisabled]);
 
   useEffect(() => {
     const state = api.current;
@@ -322,6 +395,58 @@ export function TradingChart({
     api.current?.series.priceScale().applyOptions({ mode: logScale ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal, autoScale: true });
   }, [logScale]);
 
+  const rangePoint = (x: number): AnalysisRange | null => {
+    const state = api.current;
+    return state ? analysisRangeFromCoordinates(selectableCandles, x, x,
+      (coordinate) => state.chart.timeScale().coordinateToLogical(coordinate as Coordinate), candles) : null;
+  };
+  const selectionX = (event: ReactPointerEvent<HTMLDivElement>) => event.clientX - event.currentTarget.getBoundingClientRect().left;
+  const previewTo = (anchor: number, timestamp: number) => {
+    const range = normalizeAnalysisRange(selectableCandles, { from: anchor, to: timestamp });
+    setRangePreview(range);
+    return range;
+  };
+  const handleRangePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || !rangeSelectionEnabledRef.current || pointerSelection.current) return;
+    const x = selectionX(event), point = rangePoint(x);
+    if (!point) return;
+    event.preventDefault(); event.stopPropagation();
+    const anchor = selectionAnchor.current ?? point.from;
+    pointerSelection.current = { pointerId: event.pointerId, startX: x, anchor, secondClick: selectionAnchor.current !== null };
+    previewTo(anchor, point.from);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const handleRangePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pointer = pointerSelection.current;
+    if (pointer && pointer.pointerId !== event.pointerId) return;
+    const anchor = pointer?.anchor ?? selectionAnchor.current;
+    if (anchor === null || !rangeSelectionEnabledRef.current) return;
+    const point = rangePoint(selectionX(event));
+    if (point) previewTo(anchor, point.from);
+  };
+  const handleRangePointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pointer = pointerSelection.current;
+    if (!pointer || pointer.pointerId !== event.pointerId) return;
+    event.preventDefault(); event.stopPropagation();
+    const x = selectionX(event), point = rangePoint(x);
+    pointerSelection.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (!point) { setRangePreview(null); return; }
+    const range = previewTo(pointer.anchor, point.from);
+    if (pointer.secondClick || Math.abs(x - pointer.startX) >= 5) {
+      selectionAnchor.current = null;
+      setAwaitingRangeEnd(false);
+      if (range) onSelectRange?.(range);
+    } else {
+      selectionAnchor.current = pointer.anchor;
+      setAwaitingRangeEnd(true);
+    }
+  };
+  const cancelRangePointer = () => {
+    pointerSelection.current = null; selectionAnchor.current = null;
+    setAwaitingRangeEnd(false); setRangePreview(null);
+  };
+
   const readout = hovered ?? candles.at(-1);
   const up = readout ? readout.close >= readout.open : true;
   const change = readout ? (readout.close - readout.open) / readout.open * 100 : 0;
@@ -340,12 +465,32 @@ export function TradingChart({
       </>}
       </div>
     </div>
-    <div className="chart-host" ref={host} role="img" aria-label="交互式 OHLCV K 线图。滚轮缩放、拖动平移，移动指针查看十字光标；点击标注或分析列表定位结构。时间轴使用 UTC。" />
+    <div className="chart-host-wrap" style={{ position: 'relative' }}>
+      <div className="chart-host" ref={host} role="img" aria-label="交互式 OHLCV K 线图。滚轮缩放、拖动平移，移动指针查看十字光标；点击标注或分析列表定位结构。时间轴使用 UTC。" />
+      {rangeSelectionEnabled && !selectionDisabled && rangePaneSize.width > 0 && <div
+        className="analysis-range-surface" data-testid="analysis-range-surface" role="group"
+        aria-label="在 K 线图上拖动，或依次点击起点和终点选择分析范围"
+        style={{ position: 'absolute', top: 0, left: 0, width: rangePaneSize.width, height: rangePaneSize.height, touchAction: 'none', cursor: 'crosshair', zIndex: 4, overflow: 'hidden' }}
+        onPointerDown={handleRangePointerDown} onPointerMove={handleRangePointerMove} onPointerUp={handleRangePointerUp}
+        onPointerCancel={cancelRangePointer} onLostPointerCapture={() => { if (pointerSelection.current) cancelRangePointer(); }}
+      >
+        <span className="analysis-range-hint" role="status" style={{ position: 'absolute', left: 8, right: 8, top: 8, margin: '0 auto', width: 'fit-content', maxWidth: 'calc(100% - 16px)', padding: '6px 9px', color: '#c6dcff', background: 'rgba(24,39,64,.94)', border: '1px solid #3a5f94', borderRadius: 4, fontSize: 11, lineHeight: 1.6, pointerEvents: 'none', textAlign: 'center' }}>
+          {awaitingRangeEnd ? '请选择终点 · Esc 取消本次预选' : '拖动选择范围，或依次点选起点和终点'}
+        </span>
+      </div>}
+    </div>
     <div className="chart-controls" role="toolbar" aria-label="图表显示设置">
       <span className="chart-control-caption">成交量 <i className={up ? 'readout-up' : 'readout-down'}>{readout ? volumeLabel(readout.volume) : '—'}</i></span>
       <button className="chart-control" type="button" aria-pressed={magnet} onClick={() => setMagnet((value) => !value)} title="切换十字光标磁吸到最近 K 线">磁吸</button>
       <button className="chart-control" type="button" aria-pressed={logScale} onClick={() => setLogScale((value) => !value)} title="切换对数价格坐标">对数</button>
       <button className="chart-control" type="button" onClick={() => api.current?.series.priceScale().applyOptions({ autoScale: true })} title="重新适应当前可见 K 线的价格范围">自动缩放</button>
+      {selectedRange && <button className="chart-control" type="button" disabled={!candles.some(candle => candle.timestamp === selectedRange.from) || !candles.some(candle => candle.timestamp === selectedRange.to)} onClick={() => {
+        const range = structureFocusRange(candles, { startTime: selectedRange.from, endTime: selectedRange.to }, 5);
+        if (range && api.current) {
+          api.current.chart.timeScale().setVisibleLogicalRange(range);
+          api.current.series.priceScale().applyOptions({ autoScale: true });
+        }
+      }} title="显示完整的手动分析选区">定位选区</button>}
       <span className="chart-timezone">UTC</span>
     </div>
   </div>;

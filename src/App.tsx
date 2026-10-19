@@ -20,6 +20,9 @@ import { useMarketFeed } from './hooks/useMarketFeed';
 import { closedMarketCandles, LIVE_INTERVALS, type LiveInterval, type LiveMarketQuery, type MarketSnapshot } from '../shared/liveMarket';
 import { getHealth, requestAnalysis, type AnalysisSource, type Health } from './services/api';
 import { DEFAULT_LIVE_QUERY, resolveStartup } from './startup';
+import { analysisDatasetKey, createAnalysisSnapshot, inspectAnalysisSnapshot, projectAnalysisForCandles, type AnalysisSnapshot } from './analysisSession';
+import { AnalysisStatus, type AnalysisTask } from './components/AnalysisStatus';
+import { selectAnalysisCandles } from './analysisRange';
 
 const money = formatPrice;
 const compact = (n: number) => Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(n);
@@ -51,6 +54,13 @@ export default function App() {
   const [marketSnapshot, setMarketSnapshot] = useState<MarketSnapshot | null>(null);
   const previousMarketRef = useRef<MarketSnapshot | null>(null);
   const [envelope, setEnvelope] = useState<AnalysisEnvelope | null>(() => startup.mode === 'demo' ? sampleEnvelope(candles) : null);
+  const activeDatasetKey = useRef(analysisDatasetKey(dataset));
+  const [resultSnapshot, setResultSnapshot] = useState<AnalysisSnapshot | null>(() => startup.mode === 'demo' ? createAnalysisSnapshot(candles, analysisDatasetKey(dataset), 'mock') : null);
+  const [analysisTask, setAnalysisTask] = useState<AnalysisTask>({ phase: 'idle', snapshot: null, message: '' });
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [selectionMode, setSelectionMode] = useState<'auto' | 'manual'>('auto');
+  const [selectedRange, setSelectedRange] = useState<{ from: number; to: number } | null>(null);
+  const [isSelectingRange, setIsSelectingRange] = useState(false);
   const [visibleTypes, setVisibleTypes] = useState<StructureType[]>([...STRUCTURE_TYPES]);
   const [showCandidates, setShowCandidates] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -81,26 +91,36 @@ export default function App() {
   const chartPanelRef = useRef<HTMLElement>(null);
   const controllerRef = useRef<AbortController | null>(null);
   const fileGeneration = useRef(0);
-  const analysis = envelope?.analysis;
+  const analysis = envelope ? projectAnalysisForCandles(envelope.analysis, candles, resultSnapshot?.candles) : undefined;
   const feed = useMarketFeed((snapshot, reason) => {
-    const previous = previousMarketRef.current;
-    const closedChanged = !previous || !sameCandles(closedMarketCandles(previous), closedMarketCandles(snapshot));
-    if (reason === 'connect') fileGeneration.current++;
+    const incomingDataset: Dataset = { name: snapshot.symbol, file: 'Binance USDⓈ-M', synthetic: false, timeframe: snapshot.interval.toUpperCase(), source: 'live' };
+    const incomingKey = analysisDatasetKey(incomingDataset);
+    if (incomingKey !== activeDatasetKey.current) resetAnalysisDataset(incomingKey);
     previousMarketRef.current = snapshot;
     setMarketSnapshot(snapshot);
     setCandles(current => sameCandles(current, snapshot.candles) ? current : snapshot.candles);
-    setDataset({ name: snapshot.symbol, file: 'Binance USDⓈ-M', synthetic: false, timeframe: snapshot.interval.toUpperCase(), source: 'live' });
-    if (reason === 'connect' || closedChanged) {
-      cancelAnalysis(); setEnvelope(null); setSelectedId(null); setError(''); setWarnings(snapshot.warnings);
-      setNotice(reason === 'connect' ? '' : '已收盘行情已更新，请重新分析以生成最新结构。');
-    }
+    setDataset(incomingDataset);
+    setWarnings(snapshot.warnings);
     if (reason === 'connect') {
       const url = new URL(window.location.href); url.searchParams.set('live', snapshot.symbol); url.searchParams.set('interval', snapshot.interval); url.searchParams.delete('demo');
       window.history.replaceState(null, '', url);
     }
   });
-  const analysisCandles = marketSnapshot && dataset.source === 'live' ? closedMarketCandles(marketSnapshot) : candles;
-  const canAnalyze = analysisCandles.length >= MIN_CANDLES;
+  const availableAnalysisCandles = marketSnapshot && dataset.source === 'live' ? closedMarketCandles(marketSnapshot) : candles;
+  const analysisCandles = selectionMode === 'auto' ? availableAnalysisCandles.slice(-MAX_ANALYSIS_CANDLES)
+    : selectAnalysisCandles(availableAnalysisCandles, selectedRange);
+  const missingRangeBoundary = selectionMode === 'manual' && selectedRange !== null
+    && (!availableAnalysisCandles.some(candle => candle.timestamp === selectedRange.from) || !availableAnalysisCandles.some(candle => candle.timestamp === selectedRange.to));
+  const rangeError = selectionMode === 'manual' && !selectedRange ? '请先在图表拖选 K 线范围。'
+    : selectionMode === 'manual' && selectedRange && selectedRange.from > selectedRange.to ? '范围开始不能晚于结束，请调整起止 K 线。'
+    : missingRangeBoundary ? '所选范围已移出当前行情窗口，请重新选择。'
+    : analysisCandles.length < MIN_CANDLES ? `至少需要 ${MIN_CANDLES} 根${dataset.source === 'live' ? '已收盘 ' : ''}K 线，当前 ${analysisCandles.length} 根。`
+    : analysisCandles.length > MAX_ANALYSIS_CANDLES ? `所选 ${analysisCandles.length} 根，最多允许 ${MAX_ANALYSIS_CANDLES} 根，请缩小范围。` : '';
+  const canAnalyze = !rangeError;
+  const snapshotStatus = resultSnapshot ? inspectAnalysisSnapshot(resultSnapshot, availableAnalysisCandles) : null;
+  const hiddenEvidence = Boolean(envelope && analysis && (analysis.structures.length !== envelope.analysis.structures.length
+    || getPAEvidence(analysis.priceAction).length !== getPAEvidence(envelope.analysis.priceAction).length
+    || analysis.tradeSetups.length !== envelope.analysis.tradeSetups.length || analysis.liquiditySweeps.length !== envelope.analysis.liquiditySweeps.length));
 
   useEffect(() => {
     if (startup.mode === 'live') feed.connect(startup.query);
@@ -115,6 +135,14 @@ export default function App() {
     return () => controller.abort();
   }, []);
   useEffect(() => () => { controllerRef.current?.abort(); }, []);
+  useEffect(() => {
+    if (analysisTask.phase !== 'running' || !analysisTask.snapshot) return;
+    const startedAt = analysisTask.snapshot.startedAt;
+    const update = () => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [analysisTask]);
   useEffect(() => { setSelectedSetupId(null); setSelectedSweepId(null); setSelectedPAId(null); }, [envelope]);
   useEffect(() => {
     if (!chartExpanded) return;
@@ -134,18 +162,34 @@ export default function App() {
     catch { setConnectionError(true); }
     finally { window.clearTimeout(timeout); setCheckingHealth(false); }
   }
-  function cancelAnalysis() { controllerRef.current?.abort(); controllerRef.current = null; setBusy(false); }
+  function cancelAnalysis(report = true) {
+    const controller = controllerRef.current;
+    controllerRef.current = null;
+    controller?.abort('cancelled');
+    setBusy(false);
+    if (report && controller) {
+      setAnalysisTask(current => ({ ...current, phase: 'cancelled', message: '已停止本次请求，不会自动重试。' }));
+      setNotice('分析已取消。');
+    }
+  }
+  function resetAnalysisDataset(identity: string) {
+    activeDatasetKey.current = identity;
+    cancelAnalysis(false); setEnvelope(null); setResultSnapshot(null); setAnalysisTask({ phase: 'idle', snapshot: null, message: '' });
+    setSelectedId(null); setSelectedSetupId(null); setSelectedSweepId(null); setSelectedPAId(null);
+    setSelectedRange(null); setIsSelectingRange(false); setError(''); setNotice('');
+  }
   function disconnectMarket() {
     feed.stop(); previousMarketRef.current = null; setMarketSnapshot(null);
     const url = new URL(window.location.href); url.searchParams.delete('live'); url.searchParams.delete('interval'); url.searchParams.delete('demo'); window.history.replaceState(null, '', url);
   }
   function connectMarket(query: LiveMarketQuery) {
-    // An intentional demo must disappear as soon as a real connection starts.
-    // Existing real/CSV data stays identified while a replacement is loading.
-    if (dataset.synthetic) {
-      cancelAnalysis(); setCandles([]); setEnvelope(null); setSelectedId(null);
+    fileGeneration.current++;
+    const nextDataset: Dataset = { name: query.symbol, file: 'Binance USDⓈ-M', synthetic: false, timeframe: query.interval.toUpperCase(), source: 'live' };
+    const nextIdentity = analysisDatasetKey(nextDataset);
+    if (activeDatasetKey.current !== nextIdentity) {
+      resetAnalysisDataset(nextIdentity); setCandles([]);
       setMarketSnapshot(null); previousMarketRef.current = null;
-      setDataset({ name: query.symbol, file: 'Binance USDⓈ-M', synthetic: false, timeframe: query.interval.toUpperCase(), source: 'live' });
+      setDataset(nextDataset);
       setNotice(''); setWarnings([]); setError('');
     }
     feed.connect(query);
@@ -155,7 +199,7 @@ export default function App() {
     else connectMarket(initialQuery);
   }
   function changeLiveInterval(interval: LiveInterval) {
-    if (marketSnapshot) feed.connect({ symbol: marketSnapshot.symbol, interval, limit: 300 });
+    if (marketSnapshot) connectMarket({ symbol: marketSnapshot.symbol, interval, limit: 300 });
   }
   function selectStructure(structure: Structure, source: 'chart' | 'list' = 'list') {
     setSelectedId(structure.id);
@@ -199,7 +243,7 @@ export default function App() {
     if (!name) { setError('请填写标的名称。'); return; }
     if (dataset.source === 'live' && name !== dataset.name) { setError('请在交易所行情栏切换真实合约标的。'); return; }
     if (name !== dataset.name) {
-      cancelAnalysis(); setDataset(v => ({ ...v, name })); setEnvelope(null); setSelectedId(null);
+      resetAnalysisDataset(analysisDatasetKey({ ...dataset, name })); setDataset(v => ({ ...v, name }));
       setNotice('标的名称已更新，请重新分析以使用新的上下文。');
     }
     setError(''); dialogRef.current?.close();
@@ -214,9 +258,10 @@ export default function App() {
       const parsed = parseMarketCsv(await file.text());
       if (generation !== fileGeneration.current) return;
       disconnectMarket();
-      cancelAnalysis();
+      const nextDataset: Dataset = { name: file.name.replace(/\.csv$/i, '').slice(0, 32), file: file.name, synthetic: false, timeframe: inferTimeframe(parsed.candles), source: 'csv' };
+      resetAnalysisDataset(analysisDatasetKey(nextDataset));
       setCandles(parsed.candles);
-      setDataset({ name: file.name.replace(/\.csv$/i, '').slice(0, 32), file: file.name, synthetic: false, timeframe: inferTimeframe(parsed.candles), source: 'csv' });
+      setDataset(nextDataset);
       setEnvelope(null); setSelectedId(null); setWarnings(parsed.warnings); setNotice(`已导入 ${parsed.candles.length} 根 K 线。点击「AI 分析」生成结构解读。`);
       setResetToken(v => v + 1); dialogRef.current?.close();
     } catch (e) { if (generation === fileGeneration.current) setError(e instanceof Error ? e.message : 'CSV 导入失败。'); }
@@ -225,9 +270,11 @@ export default function App() {
   function loadSample(pa = false) {
     disconnectMarket();
     const sample = pa ? PA_SAMPLE_CANDLES : SAMPLE_CANDLES;
-    fileGeneration.current++; cancelAnalysis(); setCandles(sample);
-    setDataset({ name: pa ? 'PA / 教学示例' : 'BTC / USDT', file: pa ? 'pa-example.csv' : 'sample-ohlcv.csv', synthetic: true, timeframe: inferTimeframe(sample), source: 'sample' });
+    const nextDataset: Dataset = { name: pa ? 'PA / 教学示例' : 'BTC / USDT', file: pa ? 'pa-example.csv' : 'sample-ohlcv.csv', synthetic: true, timeframe: inferTimeframe(sample), source: 'sample' };
+    fileGeneration.current++; resetAnalysisDataset(analysisDatasetKey(nextDataset)); setCandles(sample);
+    setDataset(nextDataset);
     setEnvelope(sampleEnvelope(sample));
+    setResultSnapshot(createAnalysisSnapshot(sample, analysisDatasetKey(nextDataset), 'mock'));
     setSelectedId(null); setSelectedPAId(null); setChartView('pa'); setTab('pa'); setWarnings([]); setError('');
     const url = new URL(window.location.href); url.searchParams.set('demo', pa ? 'pa' : 'smc'); window.history.replaceState(null, '', url);
     setNotice(pa ? '已加载 PA 合成教学行情：查看支撑阻力、突破回踩与 K 线形态。此数据不代表真实市场。' : '已恢复合成示例行情与模拟分析，可点击结构查看依据。'); setResetToken(v => v + 1); dialogRef.current?.close();
@@ -235,23 +282,30 @@ export default function App() {
   async function analyze() {
     if (!canAnalyze) return;
     sourceEdited.current = true;
-    cancelAnalysis();
+    cancelAnalysis(false);
     const controller = new AbortController(); controllerRef.current = controller;
+    const snapshot = createAnalysisSnapshot(analysisCandles, activeDatasetKey.current, analysisSource, Date.now(), selectionMode);
+    setAnalysisTask({ phase: 'running', snapshot, message: '' }); setElapsedSeconds(0); setIsSelectingRange(false);
     setBusy(true); setError(''); setNotice('');
     const timer = window.setTimeout(() => controller.abort('timeout'), 305_000);
     try {
-      const contextNotes = marketSnapshot && dataset.source === 'live' ? `行情来源：Binance USDⓈ-M ${marketSnapshot.symbol}，仅分析已收盘 K 线；未收盘末根已排除。${marketSnapshot.symbol === 'SNDKUSDT' ? '这是跟踪 Sandisk 的股票永续合约。' : ''}数据获取于 ${marketSnapshot.fetchedAt}。${notes}` : notes;
-      const result = await requestAnalysis(analysisCandles, { symbol: dataset.name, timeframe: dataset.timeframe, notes: contextNotes }, analysisSource === 'mock' ? 'mock' : 'ai', controller.signal, analysisSource === 'mock' ? undefined : analysisSource);
-      if (controller.signal.aborted) return;
-      setEnvelope(result); setSelectedId(null); setNotice(`分析完成：${result.source === 'mock' ? '模拟结果' : result.provider === 'codex' ? 'Codex 额度分析' : 'API 模型分析'}，覆盖最近 ${result.analyzedBars} 根 K 线。`);
+      const rangeNotes = `本次${snapshot.selectionMode === 'manual' ? '手动选择' : '自动选择最近'} ${snapshot.candles.length} 根 K 线，范围 ${new Date(snapshot.candles[0].timestamp * 1000).toISOString()} 至 ${new Date(snapshot.asOf * 1000).toISOString()}（UTC 开盘时间），分析仅针对这份固定输入。`;
+      const contextNotes = (marketSnapshot && dataset.source === 'live' ? `行情来源：Binance USDⓈ-M ${marketSnapshot.symbol}，仅分析已收盘 K 线；未收盘末根已排除。${marketSnapshot.symbol === 'SNDKUSDT' ? '这是跟踪 Sandisk 的股票永续合约。' : ''}数据获取于 ${marketSnapshot.fetchedAt}。` : '') + rangeNotes + notes;
+      const result = await requestAnalysis(snapshot.candles, { symbol: dataset.name, timeframe: dataset.timeframe, notes: contextNotes }, snapshot.source === 'mock' ? 'mock' : 'ai', controller.signal, snapshot.source === 'mock' ? undefined : snapshot.source);
+      if (controller.signal.aborted || controllerRef.current !== controller || activeDatasetKey.current !== snapshot.identity) return;
+      setResultSnapshot(snapshot); setAnalysisTask({ phase: 'success', snapshot, message: '' });
+      setEnvelope(result); setSelectedId(null); setNotice(`分析完成：${result.source === 'mock' ? '模拟结果' : result.provider === 'codex' ? 'Codex 额度分析' : 'API 模型分析'}，覆盖${snapshot.selectionMode === 'manual' ? '所选' : '最近'} ${result.analyzedBars} 根 K 线。`);
     } catch (e) {
-      if (controller.signal.reason === 'timeout') setError('分析请求超时，请检查模型服务后重试。');
-      else if (!controller.signal.aborted) setError(e instanceof Error ? e.message : '分析失败，请重试。');
+      if (controllerRef.current !== controller || activeDatasetKey.current !== snapshot.identity) return;
+      if (controller.signal.reason === 'timeout' || !controller.signal.aborted) {
+        const message = controller.signal.reason === 'timeout' ? '分析请求超时，请检查模型服务后重试。' : e instanceof Error ? e.message : '分析失败，请重试。';
+        setError(message); setAnalysisTask({ phase: 'error', snapshot, message });
+      }
     } finally { window.clearTimeout(timer); if (controllerRef.current === controller) { controllerRef.current = null; setBusy(false); } }
   }
   function downloadAnalysis() {
     if (!envelope) return;
-    const url = URL.createObjectURL(new Blob([JSON.stringify({ dataset, ...envelope }, null, 2)], { type: 'application/json' }));
+    const url = URL.createObjectURL(new Blob([JSON.stringify({ dataset, inputSnapshot: resultSnapshot, ...envelope }, null, 2)], { type: 'application/json' }));
     const a = document.createElement('a'); a.href = url; a.download = 'structure-analysis.json'; a.click(); URL.revokeObjectURL(url);
   }
 
@@ -290,6 +344,13 @@ export default function App() {
     : (health.providers?.api ?? (health.configured && health.provider === 'openai-compatible')) ? '服务端 API Key 已配置 · API 单独计费' : 'API Key 未配置，请在服务端配置。';
   const provenance = envelope?.source === 'mock' ? '规则模拟，非模型判断' : envelope?.provider === 'codex' ? `Codex 额度 · ${envelope.model}` : `API 模型 · ${envelope?.model ?? ''}`;
   const resultSource = !envelope ? `下一次：${sourceNames[analysisSource]}` : envelope.source === 'mock' ? '当前结果：模拟分析' : envelope.provider === 'codex' ? '当前结果：Codex 额度' : '当前结果：API 模型';
+  const taskStatusProps = { task: analysisTask, resultSnapshot, stale: snapshotStatus?.stale ?? false, hiddenEvidence, elapsedSeconds, onCancel: () => cancelAnalysis() };
+  function updateRangeBoundary(boundary: 'from' | 'to', timestamp: number) {
+    if (!Number.isFinite(timestamp) || !availableAnalysisCandles.some(candle => candle.timestamp === timestamp)) return;
+    setSelectedRange(current => ({ from: boundary === 'from' ? timestamp : current?.from ?? availableAnalysisCandles[0]?.timestamp ?? timestamp,
+      to: boundary === 'to' ? timestamp : current?.to ?? availableAnalysisCandles.at(-1)?.timestamp ?? timestamp }));
+    setIsSelectingRange(false);
+  }
 
   return <div className="app-shell">
     <a href="#workspace" className="skip-link">跳转到工作台</a>
@@ -340,18 +401,27 @@ export default function App() {
         <div className={`workspace-grid ${chartExpanded ? 'chart-expanded' : ''}`}>
           <section ref={chartPanelRef} className="chart-panel panel" aria-label="价格与结构图表">
             <div className="panel-toolbar chart-topbar"><div className="panel-title"><ChartLine size={19}/><h2>行情图表</h2></div><div className="chart-intervals" aria-label="图表周期">{dataset.source === 'live' ? LIVE_INTERVALS.map(interval => <button key={interval} aria-label={`切换到 ${interval} 周期`} aria-pressed={marketSnapshot?.interval === interval} disabled={feed.loading} onClick={() => changeLiveInterval(interval)}>{interval.toUpperCase()}</button>) : <span>{dataset.timeframe}</span>}</div><div className="chart-tools"><span className={`chart-connection ${feed.transport === 'streaming' && dataset.source === 'live' ? 'is-streaming' : ''}`}>{dataset.source === 'live' ? feed.transport === 'streaming' ? '实时' : feed.transport === 'paused' ? '已暂停' : '同步中' : dataset.synthetic ? 'DEMO' : 'CSV'}</span><button className="icon-button" aria-label="重置图表视图" title="显示近期 K 线" onClick={resetChart}><Pulse size={17}/></button><button className="icon-button" aria-label={chartExpanded ? '退出专注图表' : '专注图表'} aria-pressed={chartExpanded} title="切换专注图表" onClick={() => setChartExpanded(v => !v)}><ArrowsOutSimple size={17}/></button></div></div>
+            <AnalysisStatus {...taskStatusProps} compact/>
+            <div className="analysis-range-toolbar" aria-label="分析 K 线范围">
+              <div className="analysis-range-mode" role="group" aria-label="分析范围方式"><button aria-label="自动范围" aria-pressed={selectionMode === 'auto'} disabled={busy} onClick={() => { setSelectionMode('auto'); setIsSelectingRange(false); }}>自动范围</button><button aria-label="手动范围" aria-pressed={selectionMode === 'manual'} disabled={busy} onClick={() => { setSelectionMode('manual'); setIsSelectingRange(false); }}>手动范围</button></div>
+              {selectionMode === 'auto' ? <span>自动 · 最近最多 {MAX_ANALYSIS_CANDLES} 根{dataset.source === 'live' ? '已收盘 ' : ''}K 线</span> : <button className={`range-drag-button ${isSelectingRange ? 'is-active' : ''}`} aria-label="在图表拖选范围" aria-pressed={isSelectingRange} disabled={busy || !availableAnalysisCandles.length} onClick={() => setIsSelectingRange(value => !value)}>{isSelectingRange ? '正在框选 · 再点退出' : '在图表拖选范围'}</button>}
+              <button className="range-drag-button range-analyze-button" aria-label="分析当前 K 线范围" disabled={busy || !canAnalyze} onClick={() => void analyze()}>{busy ? '正在分析…' : selectionMode === 'manual' ? '分析所选范围' : '分析当前范围'}</button>
+              {selectionMode === 'manual' && <div className="analysis-range-inputs"><label>范围开始 UTC<select aria-label="范围开始 UTC" value={selectedRange?.from ?? ''} disabled={busy || !availableAnalysisCandles.length} onChange={event => updateRangeBoundary('from', Number(event.target.value))}><option value="" disabled>选择起始 K 线</option>{availableAnalysisCandles.map(candle => <option key={candle.timestamp} value={candle.timestamp}>{new Date(candle.timestamp * 1000).toISOString().replace('T', ' ').slice(0, 16)}</option>)}</select></label><label>范围结束 UTC<select aria-label="范围结束 UTC" value={selectedRange?.to ?? ''} disabled={busy || !availableAnalysisCandles.length} onChange={event => updateRangeBoundary('to', Number(event.target.value))}><option value="" disabled>选择结束 K 线</option>{availableAnalysisCandles.map(candle => <option key={candle.timestamp} value={candle.timestamp}>{new Date(candle.timestamp * 1000).toISOString().replace('T', ' ').slice(0, 16)}</option>)}</select></label></div>}
+              <div className={`analysis-range-summary ${rangeError ? 'has-error' : ''}`}>{rangeError || `将分析 ${analysisCandles.length} 根 K 线 · ${date(analysisCandles[0].timestamp)} 至 ${date(analysisCandles.at(-1)!.timestamp)} UTC`}{selectionMode === 'manual' && <small>起止均为实际 K 线开盘时间 · 允许 {MIN_CANDLES}–{MAX_ANALYSIS_CANDLES} 根{dataset.source === 'live' ? '已收盘 K 线' : ' K 线'}</small>}</div>
+            </div>
             <div className="chart-view-toolbar"><div className="chart-view-switch" role="group" aria-label="分析视图"><button aria-pressed={chartView === 'pa'} onClick={() => changeChartView('pa')}>PA 主视图</button><button aria-pressed={chartView === 'smc'} onClick={() => changeChartView('smc')}>SMC 主视图</button><button aria-pressed={chartView === 'combined'} onClick={() => changeChartView('combined')}>叠加</button></div><span className="chart-view-description">{chartView === 'pa' ? '价格行为 · 区域、路径与形态' : chartView === 'smc' ? '市场结构 · 破位、缺口与订单块' : 'PA × SMC · 共同依据'}</span></div>
             {chartView !== 'smc' && <div className="pa-layer-bar" aria-label="PA 图层显示开关"><span className="filter-caption">PA</span>{paLayers.map(({ layer, label, count }) => <label key={layer}><input type="checkbox" checked={visiblePALayers[layer]} onChange={event => setVisiblePALayers(current => ({ ...current, [layer]: event.target.checked }))}/><span className={`pa-layer-swatch ${layer}`}/>{label}<small>{count}</small></label>)}</div>}
             {chartView !== 'pa' && <div className="filter-bar" aria-label="结构显示开关"><span className="filter-caption">SMC</span><div className="filter-chips">{STRUCTURE_TYPES.map(type => <button key={type} className={`filter-chip type-${type.toLowerCase()} ${visibleTypes.includes(type) ? 'enabled' : ''}`} aria-pressed={visibleTypes.includes(type)} title={structureNames[type]} onClick={() => setVisibleTypes(v => v.includes(type) ? v.filter(t => t !== type) : [...v, type])}><span className="chip-indicator"/>{type}</button>)}</div></div>}
             <div className="advanced-layer-bar" aria-label="交易情景与流动性图层"><label><input type="checkbox" checked={showTradeSetups} onChange={event => setShowTradeSetups(event.target.checked)}/><span className="advanced-layer-swatch trade-swatch"/>开仓候选 / 盈亏区间<span className="advanced-layer-count">{analysis?.tradeSetups.length ?? 0}</span></label>{chartView !== 'pa' && <label><input type="checkbox" checked={showLiquiditySweeps} onChange={event => setShowLiquiditySweeps(event.target.checked)}/><span className="advanced-layer-swatch sweep-swatch"/>流动性扫除<span className="advanced-layer-count">{analysis?.liquiditySweeps.length ?? 0}</span></label>}</div>
             {candles.length > 0 ? (
-            <TradingChart candles={candles} structures={showCandidates ? structures : structures.filter(s => s.status === 'confirmed')} visibleTypes={visibleTypes} selectedId={selectedId} onSelect={id => { const s = structures.find(item => item.id === id); if (s) selectStructure(s, 'chart'); }} priceAction={displayedPriceAction} visiblePALayers={visiblePALayers} showPA={chartView !== 'smc'} showSMC={chartView !== 'pa'} selectedPAId={selectedPAId} onSelectPA={id => selectPA(id, 'chart')} tradeSetups={analysis?.tradeSetups ?? []} liquiditySweeps={analysis?.liquiditySweeps ?? []} showTradeSetups={showTradeSetups} showLiquiditySweeps={showLiquiditySweeps && chartView !== 'pa'} selectedSetupId={selectedSetupId} selectedSweepId={selectedSweepId} onSelectSetup={id => { const setup = analysis?.tradeSetups.find(item => item.id === id); if (setup) selectSetup(setup, 'chart'); }} onSelectSweep={id => { const sweep = analysis?.liquiditySweeps.find(item => item.id === id); if (sweep) selectSweep(sweep, 'chart'); }} resetToken={resetToken} datasetKey={`${dataset.source}:${dataset.name}:${dataset.timeframe}:${dataset.file}`} symbol={dataset.name} timeframe={dataset.timeframe} exchange={dataset.source === 'live' ? 'BINANCE' : dataset.synthetic ? '合成示例' : 'CSV'}/>
+            <TradingChart candles={candles} structures={showCandidates ? structures : structures.filter(s => s.status === 'confirmed')} visibleTypes={visibleTypes} selectedId={selectedId} onSelect={id => { const s = structures.find(item => item.id === id); if (s) selectStructure(s, 'chart'); }} priceAction={displayedPriceAction} visiblePALayers={visiblePALayers} showPA={chartView !== 'smc'} showSMC={chartView !== 'pa'} selectedPAId={selectedPAId} onSelectPA={id => selectPA(id, 'chart')} tradeSetups={analysis?.tradeSetups ?? []} liquiditySweeps={analysis?.liquiditySweeps ?? []} showTradeSetups={showTradeSetups} showLiquiditySweeps={showLiquiditySweeps && chartView !== 'pa'} selectedSetupId={selectedSetupId} selectedSweepId={selectedSweepId} onSelectSetup={id => { const setup = analysis?.tradeSetups.find(item => item.id === id); if (setup) selectSetup(setup, 'chart'); }} onSelectSweep={id => { const sweep = analysis?.liquiditySweeps.find(item => item.id === id); if (sweep) selectSweep(sweep, 'chart'); }} resetToken={resetToken} datasetKey={`${dataset.source}:${dataset.name}:${dataset.timeframe}:${dataset.file}`} symbol={dataset.name} timeframe={dataset.timeframe} exchange={dataset.source === 'live' ? 'BINANCE' : dataset.synthetic ? '合成示例' : 'CSV'} rangeSelectionEnabled={selectionMode === 'manual' && isSelectingRange} selectedRange={selectionMode === 'manual' ? selectedRange : null} onSelectRange={range => { if (!busy) { setSelectedRange(range); setIsSelectingRange(false); } }} selectableCandles={availableAnalysisCandles} selectionDisabled={busy}/>
             ) : <div className="empty-state" role="status" aria-label="真实行情等待状态">{feed.error ? <WarningCircle size={32}/> : <SpinnerGap size={32} className="spin"/>}<h3>{feed.error ? '真实行情暂不可用' : '正在连接真实行情…'}</h3><p>{feed.error ? '请检查网络连接并重试。当前没有可显示的真实行情。' : `正在获取 ${dataset.name} · ${dataset.timeframe} 的交易所 K 线。`}</p><button className="button secondary" onClick={loadRealMarket} disabled={feed.loading}>{feed.loading ? '连接中…' : '重试真实行情'}</button></div>}
             <div className="chart-footer"><span className="chart-status-legend">{chartView === 'smc' ? <><span className="line-sample"/>已确认结构<span className="line-sample dashed"/>候选结构</> : <>区域为价格带 · 回撤为虚线路径 · ◇为候选</>}</span><label className="candidate-switch"><input type="checkbox" checked={showCandidates} onChange={e => setShowCandidates(e.target.checked)}/><span className="switch-track"/>显示候选</label><span className="chart-hint">滚轮缩放 · 拖拽平移</span></div>
           </section>
 
           <aside className="analysis-panel panel" aria-label="分析结果面板">
             <div className="panel-toolbar"><div className="panel-title"><Lightning size={18}/><h2>结构解读</h2></div><span className={`source-badge ${envelope?.source === 'ai' ? 'source-ai' : ''}`}>{envelope?.source === 'ai' ? envelope.provider === 'codex' ? 'Codex 分析' : 'API 分析' : envelope ? '模拟分析' : '待分析'}</span></div>
+            <AnalysisStatus {...taskStatusProps}/>
             {analysis ? <div className="analysis-content">
               <div className="analysis-heading"><span className="eyebrow">MARKET BIAS</span><span className={`bias-badge ${analysis.bias}`}>{analysis.bias === 'bullish' ? <ArrowUpRight size={15}/> : analysis.bias === 'bearish' ? <ArrowDown size={15}/> : <Pulse size={15}/>} {directionText[analysis.bias]}</span></div>
               <h3 className="analysis-title">{hasLegacyPAPlaceholder ? 'PA 待分析' : <>{paRegimeNames[analysis.priceAction.regime]}<span className="pa-regime-label">PA 价格行为</span></>}</h3>
@@ -363,7 +433,7 @@ export default function App() {
               <div className="uncertainty-box"><div><ShieldCheck size={17}/><h3>不确定性与风险</h3></div><ul>{analysis.uncertainties.map((risk, i) => <li key={i}>{risk}</li>)}</ul></div>
               <div className="analysis-provenance"><CheckCircle size={13}/>Schema 校验通过<span>·</span>{provenance}</div>
               {envelope?.usage && <div className="analysis-usage" aria-label="本次模型用量">本次用量：输入 {envelope.usage.inputTokens.toLocaleString()} · 缓存 {envelope.usage.cachedInputTokens.toLocaleString()} · 输出 {envelope.usage.outputTokens.toLocaleString()} tokens</div>}
-            </div> : <div className="empty-state"><MagnifyingGlass size={32}/><h3>{canAnalyze ? '准备好探索结构了吗？' : '等待真实行情'}</h3><p>{canAnalyze ? '数据已就绪。点击「AI 分析」，查看结构、观察条件与风险依据。' : `至少需要 ${MIN_CANDLES} 根已收盘 K 线，数据就绪后可进行分析。`}</p><button className="button primary" onClick={() => void analyze()} disabled={busy || !canAnalyze}>开始分析<ArrowUpRight size={16}/></button></div>}
+            </div> : <div className="empty-state"><MagnifyingGlass size={32}/><h3>{busy ? '正在解读行情快照' : canAnalyze ? '准备好探索结构了吗？' : '等待分析范围就绪'}</h3><p>{busy ? '分析期间可以继续查看实时图表，进度与取消按钮就在上方。' : canAnalyze ? '数据已就绪。点击「AI 分析」，查看结构、观察条件与风险依据。' : rangeError}</p><button className="button primary" onClick={() => void analyze()} disabled={busy || !canAnalyze}>{busy ? <><SpinnerGap size={16} className="spin"/>正在分析…</> : <>开始分析<ArrowUpRight size={16}/></>}</button></div>}
           </aside>
 
           <section className="evidence-panel panel" aria-label="结构依据与观察计划">
@@ -397,6 +467,6 @@ export default function App() {
       </> : <><div className="connection-card"><span className={`status-dot ${health?.codex?.authenticated ? '' : 'status-muted'}`}/><div><strong>{health?.codex?.authenticated ? 'Codex 订阅已连接' : connectionError ? '后端服务未连接' : 'Codex 登录状态'}</strong><span>{health?.codex?.message || '正在检查本机 Codex 与 ChatGPT 登录状态。'}</span></div><button className="button text-button" disabled={checkingHealth} onClick={() => void refreshHealth()}>{checkingHealth ? '检查中…' : '刷新状态'}</button></div><label className="field-label" htmlFor="symbol-name">标的名称</label><input className="text-field" id="symbol-name" readOnly={dataset.source === 'live'} maxLength={60} value={symbolDraft} onChange={e => setSymbolDraft(e.target.value)} /><label className="field-label" htmlFor="analysis-mode">分析模式</label><select id="analysis-mode" value={analysisSource} disabled={busy} onChange={e => chooseSource(e.target.value as AnalysisSource)}><option value="codex">Codex 额度：使用本机 ChatGPT 登录</option><option value="api">API Key：使用服务端配置，API 单独计费</option><option value="mock">模拟分析：本地规则，不消耗模型额度</option></select><label className="field-label" htmlFor="analysis-notes">分析上下文（可选）</label><textarea id="analysis-notes" rows={3} maxLength={1000} value={notes} onChange={e => setNotes(e.target.value)} placeholder="例如：关注最近一段行情的结构变化与失效条件"/><p className="field-help">真实行情的标的与周期在行情栏切换，未收盘末根不参与分析。CSV 周期由时间间隔推断；每次最多发送最近 {MAX_ANALYSIS_CANDLES} 根 K 线与上下文。</p><div className="config-note"><Code size={18}/><div><strong>Codex 登录与 API 配置</strong><p>Codex 使用本机 CLI 的 ChatGPT 登录。尚未登录时，在项目终端运行 <code>npx codex login</code>，完成后刷新状态。</p><code>AI_API_KEY · AI_BASE_URL · AI_MODEL</code><p>API Key 仅保存在服务端。分析失败会显示错误，不会自动切换计费来源。仅点击分析按钮时调用模型，实时行情更新不会自动消耗额度。</p></div></div><button className="button primary full-width" onClick={saveSettings}><Check size={17}/>完成设置</button></>}
       {error && <div className="dialog-error" role="alert"><WarningCircle size={17}/>{error}</div>}
     </dialog>
-    {busy && <div className="analysis-progress" role="status"><SpinnerGap className="spin" size={18}/><div><strong>{sourceNames[analysisSource]} · 正在分析最近 {Math.min(analysisCandles.length, MAX_ANALYSIS_CANDLES)} 根 K 线</strong><span>{analysisSource === 'codex' ? 'Codex 分析可能需要几分钟；' : ''}结果通过结构与坐标校验后才会显示</span></div><button onClick={cancelAnalysis}>取消</button></div>}
+    {busy && analysisTask.snapshot && <div className="analysis-progress" role="status"><SpinnerGap className="spin" size={18}/><div><strong>{sourceNames[analysisTask.snapshot.source]} · 正在分析 {analysisTask.snapshot.candles.length} 根 K 线</strong><span>已等待 {elapsedSeconds} 秒 · 使用固定行情快照 · 校验通过后显示</span></div><button onClick={() => cancelAnalysis()}>取消</button></div>}
   </div>;
 }

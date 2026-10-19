@@ -96,7 +96,7 @@ test('loads exchange data, excludes unclosed candle from analysis, and preserves
   await expect(page.locator('.price-stat strong')).toHaveText(before!);
 });
 
-test('changing closed bars invalidates old analysis; forming-only updates retain it', async ({ page }) => {
+test('closed-history corrections retain a reviewable stale analysis; forming-only updates keep it current', async ({ page }) => {
   await page.route('**/api/market/stream?*', route => route.abort());
   let snapshot = fixture();
   await page.route('**/api/market/candles?*', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot) }));
@@ -111,11 +111,14 @@ test('changing closed bars invalidates old analysis; forming-only updates retain
   await page.locator('.market-refresh').click();
   await expect(page.locator('.market-refresh')).toBeEnabled();
   await expect(page.locator('.structure-row')).toHaveCount(beforeCount);
+  await expect(page.getByLabel('分析任务状态')).not.toContainText('行情已更新，当前结果需复核');
   snapshot = structuredClone(snapshot);
   snapshot.candles.at(-2)!.volume += 10;
   await page.locator('.market-refresh').click();
-  await expect(page.locator('.empty-state')).toBeVisible();
-  await expect(page.getByRole('status').filter({ hasText: '已收盘行情已更新' })).toBeVisible();
+  await expect(page.locator('.market-refresh')).toBeEnabled();
+  await expect(page.locator('.structure-row')).toHaveCount(beforeCount);
+  await expect(page.getByLabel('分析任务状态')).toContainText('行情已更新，当前结果需复核');
+  await expect(page.locator('.analysis-provenance')).toContainText('规则模拟');
 });
 
 test('loads actual SNDKUSDT public market when explicitly enabled', async ({ page }) => {
