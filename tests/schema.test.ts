@@ -5,6 +5,10 @@ import { SAMPLE_CANDLES } from '../shared/sample';
 import { validateCandles } from '../shared/market';
 
 const mock = () => createMockAnalysis(SAMPLE_CANDLES);
+const legacy12 = () => {
+  const { tradePlanning: _planning, research: _research, ...analysis } = mock();
+  return { ...analysis, schemaVersion: '1.2', tradeSetups: analysis.tradeSetups.map(({ trigger: _trigger, tracking: _tracking, basis: _basis, ...setup }) => setup) };
+};
 
 describe('analysis provenance contract', () => {
   const envelope = () => ({ analysis: mock(), source: 'ai', model: 'test-model', analyzedBars: SAMPLE_CANDLES.length,
@@ -13,6 +17,23 @@ describe('analysis provenance contract', () => {
 
   it('accepts Codex subscription provenance and validated token counts', () => {
     expect(validateAnalysisEnvelope(envelope(), SAMPLE_CANDLES).provider).toBe('codex');
+  });
+
+  it('accepts optional single/corrected AI attempt metadata without changing the provider output schema', () => {
+    for (const analysisAttempts of [1, 2]) {
+      expect(validateAnalysisEnvelope({ ...envelope(), analysisAttempts }, SAMPLE_CANDLES).analysisAttempts).toBe(analysisAttempts);
+    }
+    expect(validateAnalysisEnvelope(envelope(), SAMPLE_CANDLES).analysisAttempts).toBeUndefined();
+    expect((analysisJsonSchema as { properties: Record<string, unknown> }).properties).not.toHaveProperty('analysisAttempts');
+  });
+
+  it.each([0, 3, 1.5, '2', null])('rejects invalid attempt metadata %j', analysisAttempts => {
+    expect(() => validateAnalysisEnvelope({ ...envelope(), analysisAttempts }, SAMPLE_CANDLES)).toThrow(/校验失败/);
+  });
+
+  it('rejects AI attempt metadata on mock results', () => {
+    const result = { ...envelope(), source: 'mock', provider: 'mock', billing: 'none', usage: undefined, analysisAttempts: 1 };
+    expect(() => validateAnalysisEnvelope(result, SAMPLE_CANDLES)).toThrow(/来源/);
   });
 
   it.each([
@@ -170,7 +191,8 @@ describe('analysis contract and coordinate validation', () => {
   });
 
   it('accepts empty opportunities when no supported setup exists', () => {
-    const analysis: Analysis = { ...mock(), structures: [], opportunities: [], tradeSetups: [] };
+    const analysis: Analysis = { ...mock(), structures: [], opportunities: [], tradeSetups: [],
+      tradePlanning: { status: 'no-setup', reason: '没有足够计划依据。' } };
     expect(validateAnalysis(analysis, SAMPLE_CANDLES).opportunities).toEqual([]);
   });
 
@@ -184,6 +206,109 @@ describe('analysis contract and coordinate validation', () => {
 });
 
 describe('trade setup and liquidity evidence contract', () => {
+  it('requires explicit planning and trigger fields in the strict current provider schema', () => {
+    const schema = analysisJsonSchema as { properties: Record<string, any>; required: string[] };
+    expect(schema.properties.schemaVersion.const).toBe('1.5');
+    expect(schema.required).toContain('tradePlanning');
+    expect(schema.properties.tradePlanning.required).toEqual(['status', 'reason']);
+    expect(schema.properties.tradePlanning.additionalProperties).toBe(false);
+    expect(schema.properties.tradeSetups.items.required).toContain('trigger');
+  });
+
+  it('accepts a pending conditional numeric plan without requiring the entry to have triggered', () => {
+    const analysis = mock();
+    const setup = analysis.tradeSetups[0];
+    setup.trigger = '等待后续回踩并收盘站稳后再复核；当前尚未触发。';
+    const accepted = validateAnalysis(analysis, SAMPLE_CANDLES);
+    expect(accepted.tradePlanning.status).toBe('conditional');
+    expect(accepted.tradeSetups[0].status).toBe('candidate');
+    expect(accepted.tradeSetups[0].trigger).toContain('尚未触发');
+    expect(accepted.tradeSetups[0].anchorTime).toBe(SAMPLE_CANDLES.at(-1)!.timestamp);
+  });
+
+  it('accepts watch-only opportunities with a specific explanation and no invented numeric plan', () => {
+    const analysis = mock();
+    expect(analysis.opportunities.length).toBeGreaterThan(0);
+    analysis.tradeSetups = [];
+    analysis.tradePlanning = { status: 'watch-only', reason: '可观察反弹受阻，但当前无法确定有依据的保护止损位置。' };
+    const accepted = validateAnalysis(analysis, SAMPLE_CANDLES);
+    expect(accepted.tradeSetups).toEqual([]);
+    expect(accepted.opportunities).toEqual(analysis.opportunities);
+    expect(accepted.tradePlanning.reason).toContain('保护止损');
+  });
+
+  it('accepts no-setup only when both numeric and text opportunities are absent', () => {
+    const analysis = mock();
+    analysis.tradeSetups = [];
+    analysis.opportunities = [];
+    analysis.tradePlanning = { status: 'no-setup', reason: '走势不明确，缺少可以引用的当前交易情景。' };
+    expect(validateAnalysis(analysis, SAMPLE_CANDLES).tradePlanning.status).toBe('no-setup');
+  });
+
+  it.each([
+    ['watch-only', true, true], ['no-setup', true, false],
+    ['conditional', false, true], ['no-setup', false, true],
+    ['conditional', false, false], ['watch-only', false, false],
+  ] as const)('rejects inconsistent %s planning with setups=%s and opportunities=%s', (status, hasSetups, hasOpportunities) => {
+    const analysis = mock();
+    if (!hasSetups) analysis.tradeSetups = [];
+    if (!hasOpportunities) analysis.opportunities = [];
+    analysis.tradePlanning = { status, reason: '不能用错误决策状态掩盖缺失的数值计划。' };
+    expect(() => validateAnalysis(analysis, SAMPLE_CANDLES)).toThrow(/计划决策状态/);
+  });
+
+  it('rejects missing current-version planning or trigger fields and blank explanations', () => {
+    const { tradePlanning: _planning, ...missingDecision } = mock();
+    expect(() => validateAnalysis(missingDecision, SAMPLE_CANDLES)).toThrow(/tradePlanning/);
+    const missingTrigger = mock();
+    const { trigger: _trigger, ...setup } = missingTrigger.tradeSetups[0];
+    expect(() => validateAnalysis({ ...missingTrigger, tradeSetups: [setup] }, SAMPLE_CANDLES)).toThrow(/trigger/);
+    const blankReason = mock();
+    blankReason.tradePlanning.reason = ' ';
+    expect(() => validateAnalysis(blankReason, SAMPLE_CANDLES)).toThrow(/reason/);
+    const blankTrigger = mock();
+    blankTrigger.tradeSetups[0].trigger = ' ';
+    expect(() => validateAnalysis(blankTrigger, SAMPLE_CANDLES)).toThrow(/trigger/);
+  });
+
+  it('migrates complete 1.2 numeric plans without changing prices or inventing a trigger', () => {
+    const legacy = legacy12();
+    legacy.tradeSetups[0].opportunityId = legacy.opportunities[0].id;
+    const original = structuredClone(legacy);
+    const upgraded = validateAnalysis(legacy, SAMPLE_CANDLES);
+    expect(upgraded.schemaVersion).toBe('1.5');
+    expect(upgraded.tradePlanning.status).toBe('conditional');
+    expect(upgraded.tradePlanning.reason).toContain('旧版未单列计划决策原因');
+    expect(upgraded.tradeSetups[0]).toEqual({ ...legacy.tradeSetups[0], trigger: legacy.opportunities[0].trigger, tracking: null, basis: null });
+    expect(legacy).toEqual(original);
+    const unlinked = legacy12();
+    unlinked.tradeSetups[0].opportunityId = null;
+    expect(validateAnalysis(unlinked, SAMPLE_CANDLES).tradeSetups[0].trigger).toContain('旧版未单列触发条件，需复核原依据');
+  });
+
+  it.each([true, false])('migrates complete 1.2 without numeric plans and preserves opportunities=%s', hasOpportunities => {
+    const legacy = legacy12();
+    legacy.tradeSetups = [];
+    if (!hasOpportunities) legacy.opportunities = [];
+    const upgraded = validateAnalysis(legacy, SAMPLE_CANDLES);
+    expect(upgraded.tradeSetups).toEqual([]);
+    expect(upgraded.tradePlanning.status).toBe(hasOpportunities ? 'watch-only' : 'no-setup');
+    expect(upgraded.tradePlanning.reason).toContain('旧版未单列计划决策原因');
+  });
+
+  it('rejects mixed old and new contracts rather than accepting partially upgraded output', () => {
+    const legacy = legacy12();
+    expect(() => validateAnalysis({ ...legacy, tradePlanning: mock().tradePlanning }, SAMPLE_CANDLES)).toThrow(/校验失败/);
+    const withNewTrigger = { ...legacy, tradeSetups: [{ ...legacy.tradeSetups[0], trigger: '不能偷偷升级。' }] };
+    expect(() => validateAnalysis(withNewTrigger, SAMPLE_CANDLES)).toThrow(/校验失败/);
+    const { priceAction: _pa, ...legacy11 } = withNewTrigger;
+    expect(() => validateAnalysis({ ...legacy11, schemaVersion: '1.1' }, SAMPLE_CANDLES)).toThrow(/校验失败/);
+    const { tradeSetups: _setups, liquiditySweeps: _sweeps, ...legacy10 } = legacy11;
+    expect(() => validateAnalysis({ ...legacy10, schemaVersion: '1.0', tradePlanning: mock().tradePlanning }, SAMPLE_CANDLES)).toThrow(/校验失败/);
+    const { liquiditySweeps: _missing, ...incomplete12 } = legacy;
+    expect(() => validateAnalysis(incomplete12, SAMPLE_CANDLES)).toThrow(/校验失败/);
+  });
+
   it('creates only current candidate plans and actual reclaimed sweeps for the sample', () => {
     const analysis = mock();
     expect(analysis.tradeSetups.length).toBeGreaterThan(0);
@@ -207,10 +332,10 @@ describe('trade setup and liquidity evidence contract', () => {
   });
 
   it('upgrades old 1.0 results and envelopes without inventing new evidence', () => {
-    const { tradeSetups: _setups, liquiditySweeps: _sweeps, priceAction: _pa, ...current } = mock();
+    const { tradeSetups: _setups, liquiditySweeps: _sweeps, priceAction: _pa, ...current } = legacy12();
     const legacy = { ...current, schemaVersion: '1.0' };
     const upgraded = validateAnalysis(legacy, SAMPLE_CANDLES);
-    expect(upgraded.schemaVersion).toBe('1.2');
+    expect(upgraded.schemaVersion).toBe('1.5');
     expect(upgraded.tradeSetups).toEqual([]);
     expect(upgraded.liquiditySweeps).toEqual([]);
     expect(upgraded.priceAction.zones).toEqual([]);
@@ -319,5 +444,53 @@ describe('trade setup and liquidity evidence contract', () => {
     expect(analysis.liquiditySweeps.length).toBeGreaterThan(0);
     analysis.liquiditySweeps[0].extremePrice = analysis.liquiditySweeps[0].levelPrice;
     expect(() => validateAnalysis(analysis, candles)).toThrow(/精确对应/);
+  });
+});
+
+
+describe('structured trade tracking contract', () => {
+  function tracked() {
+    const analysis = mock(); const setup = analysis.tradeSetups[0];
+    const sign = setup.direction === 'bullish' ? 1 : -1;
+    const risk = Math.abs(setup.entry - setup.stopLoss);
+    setup.tracking = { steps: [{ label: '等待后续收盘越过入场参考', conditions: [{ type: sign > 0 ? 'close-above' : 'close-below', price: setup.entry, priceEnd: null }] }],
+      cancellation: { basis: 'close', price: setup.entry - sign * risk, label: '达到结构取消边界' }, expiresAfterBars: 12 };
+    return analysis;
+  }
+  it('validates explicit structured rules while keeping the plan a candidate', () => {
+    const analysis = tracked();
+    expect(validateAnalysis(analysis, SAMPLE_CANDLES)).toEqual(analysis);
+    expect(analysis.tradeSetups[0].status).toBe('candidate');
+  });
+  it('requires tracking in the current contract, with explicit null for manual rules', () => {
+    const analysis = tracked(); const { tracking: _rule, ...plan } = analysis.tradeSetups[0];
+    expect(() => validateAnalysis({ ...analysis, tradeSetups: [plan] }, SAMPLE_CANDLES)).toThrow(/tracking/);
+    const schema = analysisJsonSchema as { properties: Record<string, any> };
+    expect(schema.properties.tradeSetups.items.required).toContain('tracking');
+  });
+  it.each(['missing-zone-end', 'reversed-zone', 'unexpected-close-end', 'wrong-cancellation', 'out-of-bounds', 'zero-expiry', 'too-long', 'extra-field'])(
+    'rejects invalid structured rules: %s', kind => {
+      const analysis = tracked(); const setup = analysis.tradeSetups[0]; const rule = setup.tracking!;
+      if (kind === 'missing-zone-end') rule.steps[0].conditions[0] = { type: 'touch-zone', price: setup.entry, priceEnd: null };
+      if (kind === 'reversed-zone') rule.steps[0].conditions[0] = { type: 'touch-zone', price: setup.entry, priceEnd: setup.entry * .99 };
+      if (kind === 'unexpected-close-end') rule.steps[0].conditions[0].priceEnd = setup.entry;
+      if (kind === 'wrong-cancellation') rule.cancellation.price = setup.entry;
+      if (kind === 'out-of-bounds') rule.steps[0].conditions[0].price = 1e12;
+      if (kind === 'zero-expiry') rule.expiresAfterBars = 0;
+      if (kind === 'too-long') rule.expiresAfterBars = 301;
+      if (kind === 'extra-field') Object.assign(rule, { executeOrder: true });
+      expect(() => validateAnalysis(analysis, SAMPLE_CANDLES)).toThrow(/校验失败/);
+    });
+  it('strictly migrates complete 1.3 plans to manual without inferring rules from prose', () => {
+    const analysis = tracked();
+    const { research: _research, ...legacyBase } = analysis;
+    const legacy = { ...legacyBase, schemaVersion: '1.3', tradeSetups: analysis.tradeSetups.map(({ tracking: _rule, basis: _basis, ...setup }) => setup) };
+    const original = structuredClone(legacy);
+    const migrated = validateAnalysis(legacy, SAMPLE_CANDLES);
+    expect(migrated.schemaVersion).toBe('1.5');
+    expect(migrated.tradeSetups[0]).toEqual({ ...legacy.tradeSetups[0], tracking: null, basis: null });
+    expect(migrated.tradePlanning).toEqual(legacy.tradePlanning);
+    expect(legacy).toEqual(original);
+    expect(() => validateAnalysis({ ...legacy, tradeSetups: [{ ...legacy.tradeSetups[0], tracking: null }] }, SAMPLE_CANDLES)).toThrow(/校验失败/);
   });
 });

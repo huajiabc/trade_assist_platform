@@ -2,7 +2,8 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests/e2e',
-  fullyParallel: true,
+  fullyParallel: false,
+  workers: 1,
   timeout: 30_000,
   retries: 0,
   use: {
@@ -13,7 +14,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: process.env.PLAYWRIGHT_BASE_URL ? undefined : {
-    command: 'npm run dev',
+    command: process.env.PLAYWRIGHT_WEB_SERVER_COMMAND || 'npm run dev',
     url: 'http://127.0.0.1:5173',
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,

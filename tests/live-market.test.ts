@@ -2,14 +2,14 @@ import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../server/app';
 import { BinanceMarketProvider, CachedMarketProvider, type MarketDataProvider } from '../server/market';
-import { closedMarketCandles, liveMarketQuerySchema, validateMarketSnapshot, type LiveMarketQuery, type MarketSnapshot } from '../shared/liveMarket';
+import { closedMarketCandles, LIVE_INTERVAL_SECONDS, liveMarketQuerySchema, validateMarketSnapshot, type LiveMarketQuery, type MarketSnapshot } from '../shared/liveMarket';
 
 const START = Date.UTC(2026, 9, 1) / 1_000;
 const query: LiveMarketQuery = { symbol: 'SNDKUSDT', interval: '1h', limit: 20 };
-function rows(count = 20): unknown[][] {
+function rows(count = 20, seconds = 3_600): unknown[][] {
   return Array.from({ length: count }, (_, index) => [
-    (START + index * 3_600) * 1_000, '200.12', '203.45', '198.10', '202.25', '345.678',
-    (START + (index + 1) * 3_600) * 1_000 - 1, '69738.3755', 35, '120.125', '24294.78125', '0',
+    (START + index * seconds) * 1_000, '200.12', '203.45', '198.10', '202.25', '345.678',
+    (START + (index + 1) * seconds) * 1_000 - 1, '69738.3755', 35, '120.125', '24294.78125', '0',
   ]);
 }
 function snapshot(): MarketSnapshot {
@@ -43,6 +43,22 @@ describe('Binance public market adapter (stubbed transport)', () => {
     const result = await new BinanceMarketProvider(transport(rows(), serverTime)).getCandles(query);
     expect(result.lastCandleClosed).toBe(true);
     expect(closedMarketCandles(result)).toHaveLength(20);
+  });
+
+  it('requests native one-minute candles and closes the last bar at the minute boundary', async () => {
+    const minuteQuery: LiveMarketQuery = { ...query, interval: '1m' };
+    const boundary = (START + 20 * 60) * 1_000;
+    const fetchImpl = transport(rows(20, 60), boundary - 1);
+    const forming = await new BinanceMarketProvider(fetchImpl).getCandles(minuteQuery);
+    expect(fetchImpl.mock.calls.some(([url]) => String(url).endsWith('/klines?symbol=SNDKUSDT&interval=1m&limit=20'))).toBe(true);
+    expect(forming.interval).toBe('1m');
+    expect(forming.candles.at(-1)!.timestamp).toBe(START + 19 * 60);
+    expect(forming.candles[1].timestamp - forming.candles[0].timestamp).toBe(60);
+    expect(forming.lastCandleClosed).toBe(false);
+    expect(closedMarketCandles(forming)).toHaveLength(19);
+    const finalized = await new BinanceMarketProvider(transport(rows(20, 60), boundary)).getCandles(minuteQuery);
+    expect(finalized.lastCandleClosed).toBe(true);
+    expect(closedMarketCandles(finalized)).toHaveLength(20);
   });
 
   it.each([
@@ -112,6 +128,8 @@ describe('market snapshot contract', () => {
     expect(liveMarketQuerySchema.parse({})).toEqual({ symbol: 'SNDKUSDT', interval: '1h', limit: 300 });
     expect(liveMarketQuerySchema.parse({ symbol: ' sndkusdt ', limit: '20' })).toEqual(query);
     expect(liveMarketQuerySchema.safeParse({ limit: 501 }).success).toBe(false);
+    expect(liveMarketQuerySchema.parse({ symbol: ' sndkusdt ', interval: '1m', limit: '20' })).toEqual({ ...query, interval: '1m' });
+    expect(LIVE_INTERVAL_SECONDS['1m']).toBe(60);
   });
 });
 

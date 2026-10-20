@@ -196,7 +196,7 @@ export function createMarketStreamHandler(provider: RealtimeMarketProvider, maxC
   let clients = 0;
   return (request, response) => {
     const parsed = liveMarketQuerySchema.safeParse(request.query);
-    if (!parsed.success) throw new PublicError(400, 'MARKET_QUERY_INVALID', '实时行情参数无效：需为 USDT 交易对，周期支持 5m、15m、1h、4h、1d。');
+    if (!parsed.success) throw new PublicError(400, 'MARKET_QUERY_INVALID', '实时行情参数无效：需为 USDT 交易对，周期支持 1m、5m、15m、1h、4h、1d。');
     if (clients >= maxClients) throw new PublicError(503, 'MARKET_STREAM_BUSY', '实时连接数量已达上限，请关闭多余行情页面后重试。');
     clients += 1;
     response.status(200).set({

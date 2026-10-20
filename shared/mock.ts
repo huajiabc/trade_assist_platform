@@ -195,13 +195,15 @@ export function createMockAnalysis(candles: Candle[]): Analysis {
         id: 'watch-latest-reference', opportunityId: null,
         direction, status: 'candidate', anchorTime: last.timestamp,
         entry: last.close, stopLoss, targets, structureIds: [basis.id],
+        tracking: null, basis: null,
+        trigger: '模拟几何演示，尚未提供经验证的开仓触发条件；需独立复核行情与基础结构，不作为可执行信号。',
         rationale: `模拟观察计划：用最后一根输入 K 线收盘 ${formatPrice(last.close, false)} 作为假设开仓参考，止损距离取最近 ${recent.length} 根平均高低振幅的 1.2 倍；需要独立触发确认。2R/3R 仅用于盈亏比几何演示，并非已发生开仓或对未来价格的预测。`,
         invalidation: `参考止损 ${formatPrice(stopLoss, false)} 被有效穿越，或基础结构失效时，取消此假设；新行情到达后必须重新评估。盈亏比未计入手续费、点差与滑点。`,
       });
     }
   }
   const analysis: Analysis = {
-    schemaVersion: '1.2',
+    schemaVersion: '1.5', research: null,
     trend,
     bias: 'neutral',
     summary: `模拟分析 · 基于 ${candles.length} 根已提供的 K 线，以局部极值、收盘突破与三根 K 线缺口规则生成可交互示例。近 30 根价格变化约 ${(relativeMove * 100).toFixed(2)}%；结构记录和候选区域不能替代独立验证。`,
@@ -221,6 +223,13 @@ export function createMockAnalysis(candles: Candle[]): Analysis {
       structureIds: [candidateZone.id],
     }] : [],
     tradeSetups,
+    tradePlanning: {
+      status: tradeSetups.length ? 'conditional' : candidateZone ? 'watch-only' : 'no-setup',
+      reason: tradeSetups.length
+        ? '模拟规则提供条件性的盈亏区间几何演示，未调用 AI，也未确认开仓触发或成交。'
+        : candidateZone ? '模拟规则只提供区域观察，缺少可量化数值计划的有效距离，不生成入场、止损和目标价。'
+          : '模拟规则未找到可引用的当前计划依据，不生成数值开仓候选。',
+    },
     liquiditySweeps: liquiditySweeps.slice(-6),
     priceAction: detectPriceAction(candles),
     uncertainties: [

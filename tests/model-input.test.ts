@@ -101,14 +101,50 @@ describe('complete-window model input', () => {
       screenshot: { mimeType: 'image/png', base64: 'unused-test-image' } };
     const serialized = JSON.parse(JSON.stringify(buildAnalysisPayload(request)));
     expect(Object.keys(serialized).sort()).toEqual([
-      'task', 'timestampUnit', 'candleCloseStatus', 'analysisScope', 'reviewWindows', 'ruleIndicators', 'context', 'candles',
+      'task', 'timestampUnit', 'intervalSeconds', 'candleCloseStatus', 'analysisScope', 'reviewWindows', 'ruleIndicators', 'structureReview', 'outputBudgets', 'tradeRiskContext', 'tradePlanningTask', 'context', 'candles',
     ].sort());
     expect(serialized).not.toHaveProperty('structures');
     expect(serialized).not.toHaveProperty('priceAction');
     expect(serialized).not.toHaveProperty('tradeSetups');
     expect(serialized).not.toHaveProperty('signal');
     expect(serialized).not.toHaveProperty('screenshot');
+    expect(serialized).not.toHaveProperty('validationFeedback');
     expect(serialized.candles).toEqual(request.candles);
+  });
+
+  it.each([60, 300, 3_600, 86_400])('provides an unambiguous %i-second interval based on actual candles', seconds => {
+    const data = candles(30).map((candle, index) => ({ ...candle, timestamp: 1_790_000_000 + index * seconds }));
+    const payload = buildAnalysisPayload(input(data));
+    expect(payload.intervalSeconds).toBe(seconds);
+    expect(payload.candles).toEqual(data);
+  });
+
+  it('does not infer a fixed timeframe for irregular or insufficient timestamps', () => {
+    expect(buildAnalysisPayload(input(candles(30))).intervalSeconds).toBeNull();
+    expect(buildAnalysisPayload(input(candles(1))).intervalSeconds).toBeNull();
+    expect(buildAnalysisPayload(input([])).intervalSeconds).toBeNull();
+  });
+
+  it('forwards explicit validation feedback only for a correction, without changing the snapshot', () => {
+    const request = input(candles(30));
+    const validationFeedback = { previousAnalysis: { schemaVersion: '1.2', summary: 'prior invalid result' }, error: 'PA confirmation must close beyond the upper boundary.' };
+    const corrected = buildAnalysisPayload({ ...request, validationFeedback });
+    expect(corrected.validationFeedback).toEqual(validationFeedback);
+    expect(corrected.candles).toEqual(request.candles);
+    expect(corrected.context).toEqual(request.context);
+    expect(buildAnalysisPayload(request)).not.toHaveProperty('validationFeedback');
+  });
+
+  it('requests a reasoned conditional plan at the fixed snapshot, without requiring an already triggered trade', () => {
+    const request = input(candles(94));
+    const payload = buildAnalysisPayload(request);
+    expect(payload.tradePlanningTask).toEqual({
+      anchorTime: request.candles.at(-1)!.timestamp,
+      referenceClose: request.candles.at(-1)!.close,
+      pendingTriggersAllowed: true, maxConditionalSetups: 2, requireDecisionReason: true, forceSetup: false,
+    });
+    expect(payload).not.toHaveProperty('tradeSetups');
+    expect(payload.candles).toEqual(request.candles);
   });
 
   it('does not mutate frozen candles, context or request', () => {

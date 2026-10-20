@@ -15,12 +15,14 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts';
 import type { Candle } from '../../shared/market';
-import type { LiquiditySweep, Structure, StructureType, TradeSetup } from '../../shared/analysis';
+import type { PlanTrackingResult } from '../../shared/tradeTracking';
+import type { Analysis, LiquiditySweep, Structure, StructureType, TradeSetup } from '../../shared/analysis';
 import type { PriceAction } from '../../shared/priceAction';
 import type { RuleIndicatorZone } from '../../shared/indicators';
 import { formatPrice } from '../../shared/format';
 import { nearestCandleIndex, structureFocusRange } from '../chart/coordinates';
-import { StructureOverlay } from '../chart/StructureOverlay';
+import { ChartLabelRegistry, labelDensity } from '../chart/labelLayout';
+import { StructureOverlay, type ChartStructure } from '../chart/StructureOverlay';
 import { createChartPriceScale } from '../chart/priceScale';
 import { candleUpdatePlan, latestCandleWindow, preserveLogicalWindow } from '../chart/liveUpdates';
 import { TradeOverlay } from '../chart/TradeOverlay';
@@ -29,26 +31,31 @@ import { PriceActionOverlay } from '../chart/PriceActionOverlay';
 import { ALL_PA_LAYERS, findPAItem, paFocusRange, paItemBounds, type PALayerVisibility } from '../chart/priceActionCoordinates';
 import { AnalysisRangeOverlay } from '../chart/AnalysisRangeOverlay';
 import { IndicatorOverlay } from '../chart/IndicatorOverlay';
+import { KeyLevelOverlay } from '../chart/KeyLevelOverlay';
 import { indicatorDisplayEndTime, indicatorFocusRange } from '../chart/indicatorCoordinates';
 import { analysisRangeFromCoordinates, normalizeAnalysisRange, type AnalysisRange } from '../analysisRange';
 
 interface TradingChartProps {
   candles: Candle[];
-  structures: Structure[];
+  structures: ChartStructure[];
   visibleTypes: StructureType[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   resetToken: number;
+  evidenceFocusToken?: number;
   /** Change when switching the instrument, timeframe, or imported CSV. */
   datasetKey?: string;
   symbol?: string;
   timeframe?: string;
   exchange?: string;
   tradeSetups?: TradeSetup[];
+  tradeTracking?: Record<string, PlanTrackingResult>;
   liquiditySweeps?: LiquiditySweep[];
   showTradeSetups?: boolean;
   showLiquiditySweeps?: boolean;
   selectedSetupId?: string | null;
+  /** An explicit locate action can refocus an already selected plan. */
+  setupFocusToken?: number;
   selectedSweepId?: string | null;
   onSelectSetup?: (id: string) => void;
   onSelectSweep?: (id: string) => void;
@@ -68,6 +75,10 @@ interface TradingChartProps {
   indicatorZones?: RuleIndicatorZone[];
   selectedIndicatorId?: string | null;
   onSelectIndicator?: (id: string) => void;
+  keyLevels?: Analysis['keyLevels'];
+  showKeyLevels?: boolean;
+  selectedKeyLevelIndex?: number | null;
+  onSelectKeyLevel?: (index: number) => void;
 }
 
 interface ChartState {
@@ -79,19 +90,21 @@ interface ChartState {
   paOverlay: PriceActionOverlay;
   rangeOverlay: AnalysisRangeOverlay;
   indicatorOverlay: IndicatorOverlay;
+  keyLevelOverlay: KeyLevelOverlay;
   priceMultiplier: number;
 }
 
 const volumeLabel = (value: number) => value.toLocaleString('en-US', { maximumFractionDigits: 4 });
 
 export function TradingChart({
-  candles, structures, visibleTypes, selectedId, onSelect, resetToken,
+  candles, structures, visibleTypes, selectedId, onSelect, resetToken, evidenceFocusToken = 0,
   datasetKey = 'default', symbol = 'OHLCV', timeframe = '', exchange = 'CSV',
-  tradeSetups = [], liquiditySweeps = [], showTradeSetups = true, showLiquiditySweeps = true,
-  selectedSetupId = null, selectedSweepId = null, onSelectSetup, onSelectSweep,
+  tradeSetups = [], tradeTracking = {}, liquiditySweeps = [], showTradeSetups = true, showLiquiditySweeps = true,
+  selectedSetupId = null, setupFocusToken = 0, selectedSweepId = null, onSelectSetup, onSelectSweep,
   priceAction, visiblePALayers = ALL_PA_LAYERS, showSMC = true, showPA = true, selectedPAId = null, onSelectPA,
   rangeSelectionEnabled = false, selectedRange = null, onSelectRange, selectableCandles = candles, selectionDisabled = false,
   indicatorZones = [], selectedIndicatorId = null, onSelectIndicator,
+  keyLevels = [], showKeyLevels = true, selectedKeyLevelIndex = null, onSelectKeyLevel,
 }: TradingChartProps) {
   const host = useRef<HTMLDivElement>(null);
   const api = useRef<ChartState | null>(null);
@@ -101,6 +114,7 @@ export function TradingChart({
   const onSelectSweepRef = useRef(onSelectSweep);
   const onSelectPARef = useRef(onSelectPA);
   const onSelectIndicatorRef = useRef(onSelectIndicator);
+  const onSelectKeyLevelRef = useRef(onSelectKeyLevel);
   const rangeSelectionEnabledRef = useRef(false);
   const selectionAnchor = useRef<number | null>(null);
   const pointerSelection = useRef<{ pointerId: number; startX: number; anchor: number; secondClick: boolean } | null>(null);
@@ -108,6 +122,7 @@ export function TradingChart({
   const [rangePaneSize, setRangePaneSize] = useState({ width: 0, height: 0 });
   const [awaitingRangeEnd, setAwaitingRangeEnd] = useState(false);
   const loadedData = useRef<{ candles: Candle[]; datasetKey: string } | null>(null);
+  const [densityMode, setDensityMode] = useState('structure');
   const [hovered, setHovered] = useState<Candle | null>(null);
   const [magnet, setMagnet] = useState(true);
   const [logScale, setLogScale] = useState(false);
@@ -118,6 +133,7 @@ export function TradingChart({
   const selectedPABounds = selectedPA && priceAction ? paItemBounds(selectedPA, priceAction, candles) : null;
   const selectedPAPrices = selectedPABounds?.prices.join(',');
   const selectedIndicator = indicatorZones.find(zone => zone.id === selectedIndicatorId);
+  const selectedKeyLevel = showKeyLevels && selectedKeyLevelIndex !== null ? keyLevels[selectedKeyLevelIndex] : undefined;
   const activeSetupTargets = activeSetup?.targets.map((target) => target.price).join(',');
   candleRef.current = candles;
   onSelectRef.current = onSelect;
@@ -125,6 +141,7 @@ export function TradingChart({
   onSelectSweepRef.current = onSelectSweep;
   onSelectPARef.current = onSelectPA;
   onSelectIndicatorRef.current = onSelectIndicator;
+  onSelectKeyLevelRef.current = onSelectKeyLevel;
   rangeSelectionEnabledRef.current = rangeSelectionEnabled && !selectionDisabled;
 
   useEffect(() => {
@@ -162,20 +179,24 @@ export function TradingChart({
     volume.priceScale().applyOptions({ scaleMargins: { top: 0.16, bottom: 0 }, borderVisible: false });
     chart.panes()[0].setStretchFactor(4.3);
     chart.panes()[1].setStretchFactor(1);
-    const overlay = new StructureOverlay();
+    const registry = new ChartLabelRegistry();
+    const overlay = new StructureOverlay(registry);
     series.attachPrimitive(overlay);
-    const tradeOverlay = new TradeOverlay();
+    const tradeOverlay = new TradeOverlay(registry);
     series.attachPrimitive(tradeOverlay);
-    const paOverlay = new PriceActionOverlay();
+    const paOverlay = new PriceActionOverlay(registry);
     series.attachPrimitive(paOverlay);
     const rangeOverlay = new AnalysisRangeOverlay();
     series.attachPrimitive(rangeOverlay);
-    const indicatorOverlay = new IndicatorOverlay();
+    const indicatorOverlay = new IndicatorOverlay(registry);
     series.attachPrimitive(indicatorOverlay);
-    api.current = { chart, series, volume, overlay, tradeOverlay, paOverlay, rangeOverlay, indicatorOverlay, priceMultiplier: 1 };
+    const keyLevelOverlay = new KeyLevelOverlay();
+    series.attachPrimitive(keyLevelOverlay);
+    api.current = { chart, series, volume, overlay, tradeOverlay, paOverlay, rangeOverlay, indicatorOverlay, keyLevelOverlay, priceMultiplier: 1 };
     let sizeFrame = 0;
     const updateRangePaneSize = () => {
       const size = chart.paneSize(0);
+      setDensityMode(labelDensity(chart.timeScale().options().barSpacing, size.width).mode);
       setRangePaneSize((current) => current.width === size.width && current.height === size.height ? current : size);
     };
     const queueRangePaneSize = () => {
@@ -187,6 +208,7 @@ export function TradingChart({
     const paneElement = chart.panes()[0].getHTMLElement();
     if (paneElement) rangeResizeObserver.observe(paneElement);
     chart.timeScale().subscribeSizeChange(queueRangePaneSize);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(queueRangePaneSize);
     queueRangePaneSize();
 
     chart.subscribeCrosshairMove((event) => {
@@ -212,6 +234,8 @@ export function TradingChart({
       if (paHit) { onSelectPARef.current?.(paHit.externalId.slice(3)); return; }
       const hit = event.point ? overlay.hitTest(event.point.x, event.point.y) : null;
       if (hit) { onSelectRef.current(hit.externalId); return; }
+      const levelHit = event.point ? keyLevelOverlay.hitTest(event.point.x, event.point.y) : null;
+      if (levelHit) onSelectKeyLevelRef.current?.(Number(levelHit.externalId.slice('key-level:'.length)));
     });
     return () => {
       rangeResizeObserver.disconnect();
@@ -222,6 +246,7 @@ export function TradingChart({
       series.detachPrimitive(paOverlay);
       series.detachPrimitive(rangeOverlay);
       series.detachPrimitive(indicatorOverlay);
+      series.detachPrimitive(keyLevelOverlay);
       chart.remove();
       api.current = null;
       loadedData.current = null;
@@ -276,6 +301,7 @@ export function TradingChart({
     state.tradeOverlay.setPriceMultiplier(multiplier);
     state.paOverlay.setPriceMultiplier(multiplier);
     state.indicatorOverlay.setPriceMultiplier(multiplier);
+    state.keyLevelOverlay.setPriceMultiplier(multiplier);
     state.series.applyOptions({ priceFormat: format });
     const candleData = (candle: Candle) => ({
       time: candle.timestamp as UTCTimestamp,
@@ -322,12 +348,24 @@ export function TradingChart({
   }, [candles, priceAction, visiblePALayers, showPA, selectedPAId, selectedId, selectedSweepId, selectedSetupId, selectedIndicatorId]);
 
   useEffect(() => {
-    api.current?.tradeOverlay.setData(activeSetup ?? null, showLiquiditySweeps ? liquiditySweeps : [], selectedSweepId, Boolean(selectedPAId || selectedId || selectedIndicatorId));
-  }, [activeSetup, liquiditySweeps, showLiquiditySweeps, selectedSweepId, selectedPAId, selectedId, selectedIndicatorId]);
+    api.current?.tradeOverlay.setData(activeSetup ?? null, showLiquiditySweeps ? liquiditySweeps : [], selectedSweepId, Boolean(selectedPAId || selectedId || selectedIndicatorId), activeSetup ? tradeTracking[activeSetup.id] : undefined);
+  }, [activeSetup, tradeTracking, liquiditySweeps, showLiquiditySweeps, selectedSweepId, selectedPAId, selectedId, selectedIndicatorId]);
 
   useEffect(() => {
     api.current?.indicatorOverlay.setData(indicatorZones, selectedIndicatorId, candles);
   }, [indicatorZones, selectedIndicatorId, candles]);
+
+  useEffect(() => {
+    api.current?.keyLevelOverlay.setData(showKeyLevels ? keyLevels : [], selectedKeyLevelIndex);
+  }, [keyLevels, showKeyLevels, selectedKeyLevelIndex]);
+
+  useEffect(() => {
+    const state = api.current;
+    if (!state || !selectedKeyLevel) return;
+    // Global levels have no time anchor. Reveal the selected price while
+    // leaving the current horizontal zoom and historical position intact.
+    state.series.priceScale().applyOptions({ autoScale: true });
+  }, [selectedKeyLevelIndex, selectedKeyLevel?.price, showKeyLevels, datasetKey, evidenceFocusToken]);
 
   useEffect(() => {
     const state = api.current;
@@ -348,13 +386,13 @@ export function TradingChart({
       if (index >= 0) setHovered(candles[index]);
     });
     return () => cancelAnimationFrame(frame);
-  }, [selectedStructure?.id, selectedStructure?.startTime, selectedStructure?.endTime, selectedStructure?.price, selectedStructure?.priceEnd, datasetKey]);
+  }, [selectedStructure?.id, selectedStructure?.startTime, selectedStructure?.endTime, selectedStructure?.price, selectedStructure?.priceEnd, datasetKey, evidenceFocusToken]);
 
   useEffect(() => {
     const state = api.current;
     // A fallback setup stays visible while inspecting PA or a sweep, but must
     // never move the viewport away from that explicit selection.
-    if (!state || !activeSetup || selectedId || selectedSweepId || selectedPAId || selectedIndicatorId) return;
+    if (!state || !activeSetup || selectedId || selectedSweepId || selectedPAId || selectedIndicatorId || selectedKeyLevelIndex !== null) return;
     const range = tradeSetupFocusRange(candles, activeSetup);
     if (!range) return;
     state.chart.timeScale().setVisibleLogicalRange(range);
@@ -365,8 +403,8 @@ export function TradingChart({
       if (index >= 0) setHovered(candles[index]);
     });
     return () => cancelAnimationFrame(frame);
-    // Only changed anchors/levels refocus, never ordinary forming-candle ticks.
-  }, [activeSetup?.id, activeSetup?.anchorTime, activeSetup?.entry, activeSetup?.stopLoss, activeSetupTargets, selectedSetupId, selectedId, selectedSweepId, selectedPAId, selectedIndicatorId, datasetKey]);
+    // Explicit locate actions and changed levels refocus; ordinary live ticks do not.
+  }, [activeSetup?.id, activeSetup?.anchorTime, activeSetup?.entry, activeSetup?.stopLoss, activeSetupTargets, selectedSetupId, setupFocusToken, selectedId, selectedSweepId, selectedPAId, selectedIndicatorId, datasetKey]);
 
   useEffect(() => {
     const state = api.current;
@@ -382,7 +420,7 @@ export function TradingChart({
     });
     return () => cancelAnimationFrame(frame);
     // Extended endTime, mitigation and status change on live closes, not selection.
-  }, [selectedIndicator?.id, selectedIndicator?.originTime, selectedIndicator?.formedAt, selectedIndicator?.lowerPrice, selectedIndicator?.upperPrice, datasetKey]);
+  }, [selectedIndicator?.id, selectedIndicator?.originTime, selectedIndicator?.formedAt, selectedIndicator?.lowerPrice, selectedIndicator?.upperPrice, datasetKey, evidenceFocusToken]);
 
   useEffect(() => {
     const state = api.current;
@@ -397,7 +435,7 @@ export function TradingChart({
       if (index >= 0) setHovered(candles[index]);
     });
     return () => cancelAnimationFrame(frame);
-  }, [selectedPA?.id, selectedPABounds?.startTime, selectedPABounds?.endTime, selectedPABounds?.anchorTime, selectedPAPrices, datasetKey]);
+  }, [selectedPA?.id, selectedPABounds?.startTime, selectedPABounds?.endTime, selectedPABounds?.anchorTime, selectedPAPrices, datasetKey, evidenceFocusToken]);
 
   useEffect(() => {
     const state = api.current;
@@ -412,7 +450,7 @@ export function TradingChart({
       if (index >= 0) setHovered(candles[index]);
     });
     return () => cancelAnimationFrame(frame);
-  }, [selectedSweep?.id, selectedSweep?.levelTime, selectedSweep?.sweepTime, selectedSweep?.levelPrice, selectedSweep?.extremePrice, datasetKey]);
+  }, [selectedSweep?.id, selectedSweep?.levelTime, selectedSweep?.sweepTime, selectedSweep?.levelPrice, selectedSweep?.extremePrice, datasetKey, evidenceFocusToken]);
 
   useEffect(() => {
     const state = api.current;
@@ -531,7 +569,7 @@ export function TradingChart({
           api.current.series.priceScale().applyOptions({ autoScale: true });
         }
       }} title="显示完整的手动分析选区">定位选区</button>}
-      <span className="chart-timezone">UTC</span>
+      <span className="chart-density-status" title="仅抑制标签及局部绘图，不删除底层分析数据；点击列表可定位隐藏标签。">{densityMode === 'overview' ? '总览 · 主要结构' : densityMode === 'detail' ? '细节 · 局部证据' : '结构 · 精简标签'}</span><span className="chart-timezone">UTC</span>
     </div>
   </div>;
 }

@@ -11,6 +11,39 @@ function fixture(interval: LiveInterval = '1h'): MarketSnapshot {
   return { provider: 'binance', market: 'usdt-perpetual', symbol: 'SNDKUSDT', interval, candles, lastCandleClosed: false, serverTime: (candles.at(-1)!.timestamp + LIVE_INTERVAL_SECONDS[interval] / 3) * 1000, fetchedAt: new Date().toISOString(), warnings: [] };
 }
 
+test('switches the chart to native 1m candles, updates controls and preserves the URL on reload', async ({ page }) => {
+  const intervals: string[] = [];
+  const streamIntervals: string[] = [];
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.route('**/api/market/stream?*', route => {
+    streamIntervals.push(new URL(route.request().url()).searchParams.get('interval')!);
+    return route.abort();
+  });
+  await page.route('**/api/market/candles?*', route => {
+    const interval = new URL(route.request().url()).searchParams.get('interval') as LiveInterval;
+    intervals.push(interval);
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fixture(interval)) });
+  });
+  await page.goto('/?live=SNDKUSDT&interval=5m');
+  await expect(page.getByRole('button', { name: '切换到 1m 周期', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '切换到 1m 周期', exact: true }).click();
+  await expect(page.getByRole('button', { name: '切换到 1m 周期', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByLabel('K 线周期', { exact: true })).toHaveValue('1m');
+  await expect(page.locator('.instrument-name .interval')).toHaveText('1M');
+  await expect(page.locator('.live-market-status')).toContainText('末根未收盘');
+  await expect(page.locator('.chart-host canvas').first()).toBeVisible();
+  await expect(page).toHaveURL(/interval=1m/);
+  expect(intervals).toContain('1m');
+  await expect.poll(() => streamIntervals.includes('1m')).toBe(true);
+  await page.reload();
+  await expect(page.getByLabel('K 线周期', { exact: true })).toHaveValue('1m');
+  await expect(page.getByRole('button', { name: '切换到 1m 周期', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.chart-host canvas').first()).toBeVisible();
+  expect(intervals.at(-1)).toBe('1m');
+  expect(errors).toEqual([]);
+});
+
 test('root automatically connects SNDKUSDT 5m and keeps pending data empty until the exchange responds', async ({ page }) => {
   const queries: URLSearchParams[] = [];
   let analysisRequests = 0;

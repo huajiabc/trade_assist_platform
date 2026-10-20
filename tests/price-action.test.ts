@@ -12,7 +12,7 @@ const valid = (value: PriceAction) => validatePriceAction(value, PA_SAMPLE_CANDL
 describe('PA evidence and deterministic detection', () => {
   it('derives support/resistance, historical range, legs, three candle shapes, and a real breakout/retest from OHLCV', () => {
     const analysis = sample();
-    expect(analysis.schemaVersion).toBe('1.2');
+    expect(analysis.schemaVersion).toBe('1.5');
     expect(new Set(analysis.priceAction.zones.map(zone => zone.kind))).toEqual(new Set(['support', 'resistance', 'trading-range']));
     expect(new Set(analysis.priceAction.patterns.map(pattern => pattern.kind))).toEqual(new Set(['pin-bar', 'engulfing', 'inside-bar']));
     expect(new Set(analysis.priceAction.legs.map(leg => leg.kind))).toEqual(new Set(['impulse', 'pullback']));

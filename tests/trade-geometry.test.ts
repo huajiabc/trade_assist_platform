@@ -6,7 +6,7 @@ const setup = (direction: 'bullish' | 'bearish' = 'bullish'): TradeSetup => ({
   id: 'reference', opportunityId: null, direction, status: 'candidate', anchorTime: 1_700_000_000,
   entry: 100, stopLoss: direction === 'bullish' ? 98 : 102,
   targets: [{ price: direction === 'bullish' ? 104 : 96, label: '2R' }, { price: direction === 'bullish' ? 106 : 94, label: '3R' }],
-  structureIds: ['basis'], rationale: 'Reference only', invalidation: 'Cancel if invalidated',
+  tracking: null, basis: null, structureIds: ['basis'], trigger: '等待独立确认。', rationale: 'Reference only', invalidation: 'Cancel if invalidated',
 });
 
 describe('direction-aware risk/reward geometry', () => {

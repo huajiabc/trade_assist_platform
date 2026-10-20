@@ -45,6 +45,16 @@ describe('Binance websocket event coordinates and schema', () => {
     const data = payload(START + 3_600_000); data.k.x = true;
     expect(parseBinanceKline(data, query, data.E).closed).toBe(true);
   });
+  it('validates one-minute candles at minute-aligned times and rejects premature closure', () => {
+    const minuteQuery: LiveMarketQuery = { ...query, interval: '1m' };
+    const openTime = START + 60_000;
+    const closeTime = openTime + 60_000 - 1;
+    const data = { ...payload(openTime + 15_000), k: { ...payload().k, i: '1m', t: openTime, T: closeTime } };
+    expect(parseBinanceKline(data, minuteQuery, data.E)).toMatchObject({ interval: '1m', candle: { timestamp: openTime / 1_000 }, closeTime, closed: false });
+    expect(() => parseBinanceKline({ ...data, k: { ...data.k, x: true } }, minuteQuery, data.E)).toThrow();
+    const finalized = { ...data, E: closeTime + 1, k: { ...data.k, x: true } };
+    expect(parseBinanceKline(finalized, minuteQuery, finalized.E).closed).toBe(true);
+  });
   it.each([
     ['wrong event type', (data: ReturnType<typeof payload>) => { data.e = 'trade'; }],
     ['wrong symbol', (data: ReturnType<typeof payload>) => { data.s = 'BTCUSDT'; }],
@@ -73,6 +83,17 @@ describe('Binance websocket event coordinates and schema', () => {
 });
 
 describe('realtime subscription lifecycle (deterministic sockets)', () => {
+  it('subscribes to the native one-minute websocket stream and emits minute data', () => {
+    vi.useFakeTimers(); vi.setSystemTime(NOW);
+    const { factory, sockets } = transport(); const observe = observer();
+    const minuteQuery: LiveMarketQuery = { ...query, interval: '1m' };
+    const stop = new BinanceRealtimeProvider(factory).subscribe(minuteQuery, observe);
+    expect(factory.mock.calls[0][0]).toBe('wss://fstream.binance.com/market/ws/sndkusdt@kline_1m');
+    sockets[0].push({ ...payload(), k: { ...payload().k, i: '1m', T: START + 60_000 - 1 } });
+    expect(observe.onKline).toHaveBeenCalledWith(expect.objectContaining({ interval: '1m', closed: false, closeTime: START + 60_000 - 1 }));
+    stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it('subscribes to the current fixed market endpoint and waits for a validated first price before connected', () => {
     vi.useFakeTimers(); vi.setSystemTime(NOW);
     const { factory, sockets } = transport(); const observe = observer();

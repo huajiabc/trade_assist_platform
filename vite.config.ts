@@ -20,5 +20,6 @@ export default defineConfig(({ mode }) => ({
       },
     },
   },
-  test: { include: ['tests/**/*.test.ts'], environment: 'node' },
+  // Keep local checks within one worker on memory-constrained desktops.
+  test: { include: ['tests/**/*.test.ts'], environment: 'node', maxWorkers: 1, fileParallelism: false },
 }));

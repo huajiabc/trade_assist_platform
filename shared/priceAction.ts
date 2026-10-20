@@ -29,7 +29,7 @@ export const paBreakoutSchema = z.object({
 export const priceActionSchema = z.object({
   regime: z.enum(['uptrend', 'downtrend', 'range', 'transition']),
   summary: text,
-  zones: z.array(paZoneSchema).max(8), legs: z.array(paLegSchema).max(8),
+  zones: z.array(paZoneSchema).max(8), legs: z.array(paLegSchema).max(16),
   patterns: z.array(paPatternSchema).max(12), breakouts: z.array(paBreakoutSchema).max(6),
 }).strict();
 

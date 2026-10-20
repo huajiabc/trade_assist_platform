@@ -4,8 +4,9 @@ import type {
 } from 'lightweight-charts';
 import type { LiquiditySweep, TradeSetup } from '../../shared/analysis';
 import { formatPrice } from '../../shared/format';
+import { PLAN_PHASE_LABELS, type PlanTrackingResult } from '../../shared/tradeTracking';
 import type { Viewport } from './coordinates';
-import { reserveLabel, type LabelBox } from './labelLayout';
+import { ChartLabelRegistry, placeLabel, type LabelBox } from './labelLayout';
 import {
   distanceToSweepGeometry, distanceToTradeGeometry, mapLiquiditySweep, mapTradeSetup, SETUP_PROJECTION_BARS,
   type SweepGeometry, type TradeGeometry,
@@ -21,6 +22,7 @@ export class TradeOverlay implements ISeriesPrimitive {
   private setup: TradeSetup | null = null;
   private sweeps: LiquiditySweep[] = [];
   private selectedSweepId: string | null = null;
+  private tracking: PlanTrackingResult | undefined;
   private dimmed = false;
   private priceMultiplier = 1;
   private viewport: Viewport = { width: 0, height: 0 };
@@ -32,6 +34,7 @@ export class TradeOverlay implements ISeriesPrimitive {
     { zOrder: () => 'top', renderer: () => ({ draw: (target) => this.draw(target, false) }) },
   ];
 
+  constructor(private readonly registry = new ChartLabelRegistry()) {}
   attached(parameters: SeriesAttachedParameter): void { this.attachment = parameters; }
   detached(): void { this.attachment = null; this.drawnSetup = null; this.drawnSweeps = []; this.labelHits = []; }
   paneViews(): readonly IPrimitivePaneView[] { return this.views; }
@@ -41,7 +44,8 @@ export class TradeOverlay implements ISeriesPrimitive {
     this.attachment?.requestUpdate();
   }
 
-  setData(setup: TradeSetup | null, sweeps: LiquiditySweep[], selectedSweepId: string | null, dimmed = false): void {
+  setData(setup: TradeSetup | null, sweeps: LiquiditySweep[], selectedSweepId: string | null, dimmed = false, tracking?: PlanTrackingResult): void {
+    this.tracking = tracking;
     this.setup = setup;
     this.sweeps = sweeps;
     this.selectedSweepId = selectedSweepId;
@@ -101,6 +105,10 @@ export class TradeOverlay implements ISeriesPrimitive {
     }).sort((a, b) => Number(a.sweep.id === this.selectedSweepId) - Number(b.sweep.id === this.selectedSweepId));
   }
 
+  private isRetired(): boolean {
+    return Boolean(this.tracking && ['invalidated', 'expired', 'stop-touched', 'targets-touched', 'ambiguous', 'needs-review'].includes(this.tracking.phase));
+  }
+
   private draw(target: Target, background: boolean): void {
     target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
       this.viewport = mediaSize;
@@ -109,14 +117,15 @@ export class TradeOverlay implements ISeriesPrimitive {
       ctx.beginPath(); ctx.rect(0, 0, mediaSize.width, mediaSize.height); ctx.clip();
       if (background) {
         if (this.drawnSetup) {
-          ctx.save(); if (this.dimmed || this.selectedSweepId) ctx.globalAlpha = .3;
+          ctx.save(); if (this.dimmed || this.selectedSweepId || this.isRetired()) ctx.globalAlpha = .3;
           this.drawRiskAreas(ctx, this.drawnSetup.geometry); ctx.restore();
         }
       } else {
         this.labelHits = [];
-        const labels: LabelBox[] = [];
+        const labels = this.registry.begin('plans', 1);
+        const inherited = labels.length;
         if (this.drawnSetup) {
-          ctx.save(); if (this.dimmed || this.selectedSweepId) ctx.globalAlpha = .5;
+          ctx.save(); if (this.dimmed || this.selectedSweepId || this.isRetired()) ctx.globalAlpha = .5;
           this.drawSetup(ctx, this.drawnSetup, labels); ctx.restore();
         }
         for (const item of this.drawnSweeps) this.drawSweep(ctx, item);
@@ -126,6 +135,7 @@ export class TradeOverlay implements ISeriesPrimitive {
             this.drawSweepLabel(ctx, item, labels); ctx.restore();
           }
         }
+        this.registry.commit('plans', labels, inherited);
       }
       ctx.restore();
     });
@@ -161,14 +171,42 @@ export class TradeOverlay implements ISeriesPrimitive {
     ctx.setLineDash([]);
     // The hollow candidate diamond is exactly at (anchorTime, entry).
     this.diamond(ctx, x1, entryY, 5, '#d1d4dc', false);
-    this.tag(ctx, `入场候选 ${formatPrice(setup.entry)}`, x2 + 7, entryY, '#d1d4dc', `setup:${setup.id}`, occupied, true, { x: x2, y: entryY });
-    this.tag(ctx, `SL ${formatPrice(setup.stopLoss)}`, x2 + 7, stopY, '#ff6b77', `setup:${setup.id}`, occupied, true, { x: x2, y: stopY });
-    targets.forEach((target, index) => this.tag(ctx, `TP${index + 1} ${formatPrice(target.price)}`, x2 + 7, target.y,
-      '#2bc5a8', `setup:${setup.id}`, occupied, true, { x: x2, y: target.y }));
+    // Keep trade prices left of the anchor: native key-level titles occupy
+    // the right edge of the pane and would otherwise cover E / SL / TP labels.
+    const tradePriceTag = (text: string, y: number, color: string) => {
+      ctx.font = '500 10px Arial, "Segoe UI", sans-serif';
+      this.tag(ctx, text, x1 - ctx.measureText(text).width - 16, y, color,
+        `setup:${setup.id}`, occupied, true, { x: x1, y });
+    };
+    tradePriceTag(`入场候选 ${formatPrice(setup.entry)}`, entryY, '#d1d4dc');
+    tradePriceTag(`SL ${formatPrice(setup.stopLoss)}`, stopY, '#ff6b77');
+    targets.forEach((target, index) => tradePriceTag(`TP${index + 1} ${formatPrice(target.price)}`, target.y, '#2bc5a8'));
+    if (this.tracking) {
+      this.tag(ctx, PLAN_PHASE_LABELS[this.tracking.phase], x1 + 6, Math.min(stopY, targets[0].y) + 12, '#b9c9ed', `setup:${setup.id}`, occupied, true);
+      this.drawTrackingEvents(ctx, setup, occupied);
+    }
     const ratio = targets[0].rewardRisk;
     const ratioText = `${setup.direction === 'bullish' ? '多' : '空'} · R:R 1:${ratio < .01 ? ratio.toExponential(2) : ratio.toFixed(2)}`;
     this.tag(ctx, ratioText, x1 + 6, (entryY + targets[0].y) / 2, '#2bc5a8', `setup:${setup.id}`, occupied, false);
     ctx.restore();
+  }
+
+  private drawTrackingEvents(ctx: CanvasRenderingContext2D, setup: TradeSetup, occupied: LabelBox[]): void {
+    if (!this.attachment || !this.tracking) return;
+    const { chart, series } = this.attachment;
+    for (const event of this.tracking.events) {
+      const x = chart.timeScale().timeToCoordinate(event.time as UTCTimestamp);
+      const y = series.priceToCoordinate(event.price * this.priceMultiplier);
+      if (x === null || y === null || x < 0 || x > this.viewport.width || y < 0 || y > this.viewport.height) continue;
+      const color = event.type === 'invalidation' || event.type === 'stop' ? '#ff6b77'
+        : event.type === 'expiry' || event.type === 'ambiguous' ? '#f0c674' : '#2bc5a8';
+      this.diamond(ctx, x, y, event.type === 'step' ? 3 : 5, color, false);
+      if (event.type !== 'step' && event.type !== 'target') {
+        const text = event.type === 'conditions-met' ? '条件满足' : event.type === 'invalidation' ? '候选失效'
+          : event.type === 'expiry' ? '候选过期' : event.type === 'ambiguous' ? '顺序不明' : '参考 SL 触及';
+        this.tag(ctx, text, x + 8, y - 16, color, 'setup:' + setup.id, occupied, false, { x, y });
+      }
+    }
   }
 
   private drawSweep(ctx: CanvasRenderingContext2D, { sweep, geometry }: DrawSweep): void {
@@ -214,15 +252,7 @@ export class TradeOverlay implements ISeriesPrimitive {
     const width = ctx.measureText(text).width + 10;
     const left = Math.max(4, Math.min(preferredX, this.viewport.width - width - 4));
     const centerY = Math.max(10, Math.min(preferredY, this.viewport.height - 10));
-    let box: LabelBox | null = null;
-    for (const shift of [0, -18, 18, -36, 36, -54, 54]) {
-      const candidate = { left, top: Math.max(2, Math.min(centerY + shift - 8, this.viewport.height - 18)), width, height: 16 };
-      if (reserveLabel(candidate, occupied)) { box = candidate; break; }
-    }
-    if (!box && essential) {
-      box = { left, top: centerY - 8, width, height: 16 };
-      reserveLabel(box, occupied, true);
-    }
+    const box = placeLabel({ left, top: centerY - 8, width: Math.min(width, this.viewport.width - 8), height: 16 }, this.viewport, occupied, essential);
     if (box) {
       if (anchor) {
         const closestX = Math.max(box.left, Math.min(anchor.x, box.left + box.width));

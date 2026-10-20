@@ -8,8 +8,9 @@ const candles: Candle[] = Array.from({ length: 30 }, (_, index) => ({
 }));
 const time = (index: number) => candles[index].timestamp;
 const empty = (): Analysis => ({
-  schemaVersion: '1.2', trend: 'neutral', bias: 'neutral', summary: '分析结果',
+  schemaVersion: '1.5', research: null, trend: 'neutral', bias: 'neutral', summary: '分析结果',
   structures: [], keyLevels: [], opportunities: [], tradeSetups: [], liquiditySweeps: [], uncertainties: ['存在不确定性'],
+  tradePlanning: { status: 'no-setup', reason: '没有计划依据。' },
   priceAction: { regime: 'range', summary: 'PA 分析', zones: [], legs: [], patterns: [], breakouts: [] },
 });
 const structure = (first: number, last: number): Analysis['structures'][number] => ({
@@ -114,7 +115,8 @@ describe('returned historical annotation distribution', () => {
     analysis.keyLevels = [{ label: '关键价位', price: 100, reason: '依据' }];
     analysis.opportunities = [{ id: 'opportunity', direction: 'bullish', trigger: '条件', invalidation: '失效', target: '目标', risk: '风险', structureIds: ['structure'] }];
     analysis.tradeSetups = [{ id: 'trade', opportunityId: 'opportunity', status: 'candidate', direction: 'bullish', anchorTime: time(26),
-      entry: 100, stopLoss: 98, targets: [{ label: '目标', price: 104 }], structureIds: ['structure'], rationale: '依据', invalidation: '失效' }];
+      entry: 100, stopLoss: 98, targets: [{ label: '目标', price: 104 }], tracking: null, basis: null, structureIds: ['structure'], trigger: '触发条件', rationale: '依据', invalidation: '失效' }];
+    analysis.tradePlanning = { status: 'conditional', reason: '有数值候选。' };
     expect(counts(analysis)).toEqual([0, 0, 0]);
   });
 

@@ -14,7 +14,7 @@ test('numeric candidates show exact prices and risk distances, focus chart, and 
   const setup = sample.tradeSetups[0];
   expect(setup).toBeDefined();
   const card = page.locator(`[data-setup-id="${setup.id}"]`);
-  await expect(card).toContainText('待确认');
+  await expect(card).toContainText('需人工确认');
   await expect(card.locator('.trade-price-grid strong').nth(0)).toHaveText(formatPrice(setup.entry));
   await expect(card.locator('.trade-price-grid strong').nth(1)).toHaveText(formatPrice(setup.stopLoss));
   await expect(card.locator('.risk-reward-target')).toHaveCount(setup.targets.length);
@@ -67,7 +67,7 @@ test('liquidity cards explain OHLC inference, focus the sweep, and re-enable the
 });
 
 test('strict legacy analysis remains usable and shows empty new layers without invented levels', async ({ page }) => {
-  const { tradeSetups: _setups, liquiditySweeps: _sweeps, priceAction: _pa, ...legacy } = sample;
+  const { tradeSetups: _setups, tradePlanning: _planning, research: _research, liquiditySweeps: _sweeps, priceAction: _pa, ...legacy } = sample;
   await page.route('**/api/analyze', route => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify({
       analysis: { ...legacy, schemaVersion: '1.0' }, source: 'mock', model: 'legacy-test',
@@ -81,7 +81,7 @@ test('strict legacy analysis remains usable and shows empty new layers without i
   await page.getByRole('tab', { name: /潜在观察计划/ }).click();
   await expect(page.locator('.trade-plan-card')).toHaveCount(0);
   await expect(page.getByRole('tab', { name: /潜在观察计划/ })).toContainText(String(legacy.opportunities.length));
-  await expect(page.locator('.advanced-empty')).toContainText('旧分析无数值计划，需重新分析');
+  await expect(page.locator('.advanced-empty')).toContainText('旧版未单列计划决策原因');
   await page.getByRole('tab', { name: /流动性扫除/ }).click();
   await expect(page.locator('.sweep-card')).toHaveCount(0);
   await expect(page.locator('.advanced-empty')).toContainText('旧版结果');

@@ -2,7 +2,10 @@ import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { Candle } from './market';
 import { calculateRiskReward } from './tradeGeometry';
+import { tradeTrackingSchema, validateTradeTracking } from './tradeTracking';
 import { emptyPriceAction, priceActionSchema, validatePriceAction } from './priceAction';
+import { extractStructureEvidence } from './structureEvidence';
+import { researchSchema, tradeBasisSchema, validateResearch } from './analysisResearch';
 
 export const STRUCTURE_TYPES = ['HH', 'HL', 'LH', 'LL', 'BOS', 'CHoCH', 'FVG', 'OB'] as const;
 export type StructureType = typeof STRUCTURE_TYPES[number];
@@ -35,6 +38,9 @@ const tradeSetupSchema = z.object({
   stopLoss: priceSchema,
   targets: z.array(z.object({ price: priceSchema, label: z.string().trim().min(1).max(80) }).strict()).min(1).max(3),
   structureIds: z.array(idSchema).min(1).max(12),
+  trigger: textSchema,
+  tracking: tradeTrackingSchema,
+  basis: tradeBasisSchema,
   rationale: textSchema,
   invalidation: textSchema,
 }).strict();
@@ -53,10 +59,11 @@ const liquiditySweepSchema = z.object({
 
 /** The exact provider-facing contract. Cross-field/data checks run in validateAnalysis. */
 export const analysisSchema = z.object({
-  schemaVersion: z.literal('1.2'),
+  schemaVersion: z.literal('1.5'),
   trend: directionSchema,
   bias: directionSchema,
   summary: z.string().trim().min(1).max(2_000),
+  research: researchSchema,
   structures: z.array(structureSchema).max(80),
   keyLevels: z.array(z.object({ label: z.string().trim().min(1).max(80), price: priceSchema, reason: textSchema }).strict()).max(20),
   opportunities: z.array(z.object({
@@ -69,6 +76,10 @@ export const analysisSchema = z.object({
     structureIds: z.array(idSchema).min(1).max(12),
   }).strict()).max(10),
   tradeSetups: z.array(tradeSetupSchema).max(6),
+  tradePlanning: z.object({
+    status: z.enum(['conditional', 'watch-only', 'no-setup']),
+    reason: textSchema,
+  }).strict(),
   liquiditySweeps: z.array(liquiditySweepSchema).max(20),
   priceAction: priceActionSchema,
   uncertainties: z.array(textSchema).min(1).max(12),
@@ -86,6 +97,7 @@ export const analysisEnvelopeSchema = z.object({
   generatedAt: z.string().datetime({ offset: true }),
   provider: z.enum(['codex', 'openai-compatible', 'mock']).optional(),
   billing: z.enum(['chatgpt-plan', 'api', 'none']).optional(),
+  analysisAttempts: z.union([z.literal(1), z.literal(2)]).optional(),
   usage: z.object({
     inputTokens: z.number().int().nonnegative(),
     cachedInputTokens: z.number().int().nonnegative(),
@@ -99,16 +111,44 @@ const generatedSchema = zodToJsonSchema(analysisSchema, { target: 'jsonSchema7',
 const { $schema: _schemaDialect, ...providerSchema } = generatedSchema;
 export const analysisJsonSchema = providerSchema;
 
-/** Upgrade only complete old contracts. New-version missing fields remain errors. */
+// Parse complete legacy shapes first: mixed old/new fields must not be silently
+// stripped or repaired, and new provider output never receives default fields.
+const legacy14SetupSchema = tradeSetupSchema.omit({ basis: true });
+const legacy14Schema = analysisSchema.omit({ research: true }).extend({ schemaVersion: z.literal('1.4'), tradeSetups: z.array(legacy14SetupSchema).max(6), priceAction: priceActionSchema.extend({ legs: z.array(priceActionSchema.shape.legs.element).max(8) }) }).strict();
+const legacy13SetupSchema = legacy14SetupSchema.omit({ tracking: true });
+const legacy13Schema = legacy14Schema.extend({ schemaVersion: z.literal('1.3'), tradeSetups: z.array(legacy13SetupSchema).max(6) }).strict();
+const legacyTradeSetupSchema = legacy13SetupSchema.omit({ trigger: true });
+const legacy12Schema = legacy13Schema.omit({ tradePlanning: true }).extend({
+  schemaVersion: z.literal('1.2'),
+  tradeSetups: z.array(legacyTradeSetupSchema).max(6),
+}).strict();
+const legacy11Schema = legacy12Schema.omit({ priceAction: true }).extend({ schemaVersion: z.literal('1.1') }).strict();
+const legacy10Schema = legacy11Schema.omit({ tradeSetups: true, liquiditySweeps: true }).extend({ schemaVersion: z.literal('1.0') }).strict();
+
+/** Upgrade only complete old contracts. Never infer numeric plans from prose. */
 function migrateLegacyAnalysis(input: unknown): unknown {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
   const legacy = input as Record<string, unknown>;
-  if ('priceAction' in legacy) return input;
-  if (legacy.schemaVersion === '1.0' && !('tradeSetups' in legacy) && !('liquiditySweeps' in legacy)) {
-    return { ...legacy, schemaVersion: '1.2', tradeSetups: [], liquiditySweeps: [], priceAction: emptyPriceAction() };
-  }
-  if (legacy.schemaVersion === '1.1') return { ...legacy, schemaVersion: '1.2', priceAction: emptyPriceAction() };
-  return input;
+  const schema = legacy.schemaVersion === '1.0' ? legacy10Schema
+    : legacy.schemaVersion === '1.1' ? legacy11Schema
+    : legacy.schemaVersion === '1.2' ? legacy12Schema : legacy.schemaVersion === '1.3' ? legacy13Schema : legacy.schemaVersion === '1.4' ? legacy14Schema : null;
+  if (!schema) return input;
+  const parsed = schema.safeParse(input);
+  if (!parsed.success) return input;
+  const previous = parsed.data;
+  const previousSetups = 'tradeSetups' in previous ? previous.tradeSetups : [];
+  const tradeSetups = previousSetups.map(setup => ({ ...setup,
+    trigger: 'trigger' in setup ? setup.trigger : previous.opportunities.find(opportunity => opportunity.id === setup.opportunityId)?.trigger
+      ?? '旧版未单列触发条件，需复核原依据。',
+    tracking: 'tracking' in setup ? setup.tracking : null,
+    basis: null,
+  }));
+  return { ...previous, schemaVersion: '1.5', research: null, tradeSetups,
+    liquiditySweeps: 'liquiditySweeps' in previous ? previous.liquiditySweeps : [],
+    priceAction: 'priceAction' in previous ? previous.priceAction : emptyPriceAction(),
+    tradePlanning: 'tradePlanning' in previous ? previous.tradePlanning : { status: tradeSetups.length ? 'conditional' : previous.opportunities.length ? 'watch-only' : 'no-setup',
+      reason: '旧版未单列计划决策原因；请重新分析或复核原依据，迁移不会从文字推算入场、止损或目标价。' },
+  };
 }
 
 function samePrice(actual: number, expected: number): boolean {
@@ -127,12 +167,17 @@ export function validateAnalysis(input: unknown, candles: Candle[]): Analysis {
     throw new Error(`分析 JSON 校验失败（${issue.path.join('.') || 'root'}）：${issue.message}`);
   }
   const analysis = result.data;
+  const expectedPlanning = analysis.tradeSetups.length ? 'conditional' : analysis.opportunities.length ? 'watch-only' : 'no-setup';
+  if (analysis.tradePlanning.status !== expectedPlanning) {
+    throw new Error('分析 JSON 校验失败：计划决策状态与数值候选、观察情景数量不一致。');
+  }
   if (!candles.length) throw new Error('分析 JSON 校验失败：缺少输入行情。');
   const times = new Set(candles.map((candle) => candle.timestamp));
   const candleByTime = new Map(candles.map((candle) => [candle.timestamp, candle]));
   const minPrice = Math.min(...candles.map((candle) => candle.low));
   const maxPrice = Math.max(...candles.map((candle) => candle.high));
-  const structureIds = new Set<string>();
+  const ruleEvidence = extractStructureEvidence(candles);
+  const structureIds = new Set<string>([...ruleEvidence.structures, ...ruleEvidence.legs].map(item => item.id));
   for (const structure of analysis.structures) {
     if (structureIds.has(structure.id)) throw new Error(`分析 JSON 校验失败：结构 ID ${structure.id} 重复。`);
     structureIds.add(structure.id);
@@ -204,6 +249,7 @@ export function validateAnalysis(input: unknown, candles: Candle[]): Analysis {
     if (prices.some(price => price < lowerBound || price > upperBound)) {
       throw new Error(`分析 JSON 校验失败：观察计划 ${setup.id} 的价格超出行情窗口的合理延伸范围。`);
     }
+    validateTradeTracking(setup, lowerBound, upperBound);
     const sign = setup.direction === 'bullish' ? 1 : -1;
     const tolerance = Math.max(Number.MIN_VALUE, setup.entry * Number.EPSILON * 8);
     if ((setup.entry - setup.stopLoss) * sign <= tolerance) {
@@ -256,6 +302,7 @@ export function validateAnalysis(input: unknown, candles: Candle[]): Analysis {
     }
   }
   validatePriceAction(analysis.priceAction, candles, new Set(analysis.structures.map(structure => structure.id)));
+  validateResearch(analysis, candles, ruleEvidence, analysis.research !== null);
   return analysis;
 }
 
@@ -265,8 +312,8 @@ export function validateAnalysisEnvelope(input: unknown, candles: Candle[]): Ana
     : input;
   const result = analysisEnvelopeSchema.safeParse(normalized);
   if (!result.success) throw new Error(`分析响应校验失败：${result.error.issues[0].message}`);
-  const { source, provider, billing, usage } = result.data;
-  if ((source === 'mock' && (provider && provider !== 'mock' || billing && billing !== 'none' || usage))
+  const { source, provider, billing, usage, analysisAttempts } = result.data;
+  if ((source === 'mock' && (provider && provider !== 'mock' || billing && billing !== 'none' || usage || analysisAttempts !== undefined))
     || (source === 'ai' && (provider === 'mock' || billing === 'none'))
     || (provider === 'codex' && billing && billing !== 'chatgpt-plan')
     || (provider === 'openai-compatible' && billing && billing !== 'api')

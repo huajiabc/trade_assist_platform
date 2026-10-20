@@ -20,7 +20,7 @@ export function AnalysisStatus({ task, resultSnapshot, stale, hiddenEvidence, el
   return <section className={`analysis-task-status ${compact ? 'is-compact' : ''} phase-${task.phase} ${stale ? 'is-stale' : ''}`}
     aria-label={compact ? '图表分析状态' : '分析任务状态'}>
     <div className="analysis-task-heading">{icon}<strong aria-live="polite" aria-atomic="true">{title}</strong>{running && <span className="analysis-task-elapsed" aria-live="off">已等待 {elapsedSeconds} 秒</span>}</div>
-    {running ? <p>使用固定行情快照，实时更新不会中断。{task.snapshot?.source === 'codex' ? 'Codex 可能需要几分钟。' : ''}</p>
+    {running ? <p>使用固定行情快照，实时更新不会中断。{task.snapshot?.source === 'codex' ? 'Codex 可能需要几分钟。' : ''}{task.snapshot?.source !== 'mock' ? '校验失败时最多自动修正 1 次，最多调用模型 2 次。' : ''}</p>
       : task.phase === 'error' || task.phase === 'cancelled' ? <p className="analysis-task-message">{task.message}{resultSnapshot && ' 上次成功结果仍保留。'}</p> : null}
     {input && <p className="analysis-task-cutoff">{running ? '本次输入末根' : resultSnapshot ? '分析末根' : '本次输入末根'}：<time dateTime={new Date(input.asOf * 1000).toISOString()}>{utc(input.asOf)} UTC</time>（开盘时间）{!running && resultSnapshot ? ` · ${sourceNames[resultSnapshot.source]}` : ''}</p>}
     {input && <p className="analysis-task-cutoff">固定输入 {input.candles.length} 根 · 起点 <time dateTime={new Date(input.candles[0].timestamp * 1000).toISOString()}>{utc(input.candles[0].timestamp)} UTC</time> · {input.selectionMode === 'manual' ? '手动范围' : '自动范围'}</p>}

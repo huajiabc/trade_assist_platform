@@ -10,8 +10,8 @@ const readyHealth = {
   codex: { available: true, authenticated: true, message: '测试已验证的 Codex 来源。' },
 };
 
-function fixture(interval: LiveInterval = '5m'): MarketSnapshot {
-  const candles = Array.from({ length: 40 }, (_, index) => {
+function fixture(interval: LiveInterval = '5m', candleCount = 40): MarketSnapshot {
+  const candles = Array.from({ length: candleCount }, (_, index) => {
     const open = 1200 + Math.sin(index * .65) * 10;
     const close = open + Math.sin(index) * 2;
     return { timestamp: 1791244800 + index * LIVE_INTERVAL_SECONDS[interval], open, high: Math.max(open, close) + 2, low: Math.min(open, close) - 2, close, volume: 100 + index };
@@ -30,19 +30,19 @@ function deferred() {
   return { promise: new Promise<void>(resolve => { release = resolve; }), release: () => release() };
 }
 
-async function fulfillAnalysis(route: Route, model = 'session-test-model') {
+async function fulfillAnalysis(route: Route, model = 'session-test-model', analysisAttempts?: 1 | 2) {
   const candles: Candle[] = route.request().postDataJSON().candles;
   await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
     analysis: createMockAnalysis(candles), source: 'ai', model, provider: 'codex', billing: 'chatgpt-plan',
-    analyzedBars: candles.length, generatedAt: new Date().toISOString(),
+    analyzedBars: candles.length, generatedAt: new Date().toISOString(), ...(analysisAttempts ? { analysisAttempts } : {}),
   }) });
 }
 
-async function setupMarket(page: Page, getSnapshot: () => MarketSnapshot) {
+async function setupMarket(page: Page, getSnapshot: () => MarketSnapshot, interval: LiveInterval = '5m') {
   await page.route('**/api/health', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(readyHealth) }));
   await page.route('**/api/market/stream?*', route => route.abort());
   await page.route('**/api/market/candles?*', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(getSnapshot()) }));
-  await page.goto('/?live=SNDKUSDT&interval=5m');
+  await page.goto(`/?live=SNDKUSDT&interval=${interval}`);
   await expect(page.getByLabel('分析来源', { exact: true })).toHaveValue('codex');
   await expect(page.locator('.price-stat strong')).not.toHaveText('—');
 }
@@ -90,6 +90,58 @@ test('a new closed bar cannot cancel a pending analysis or erase its frozen-snap
   await expect(page.getByLabel('分析任务状态')).toContainText('行情已更新，当前结果需复核');
   expect(requests).toHaveLength(1);
   expect(requests[0].candles.at(-1)!.timestamp).toBe(analyzedLast.timestamp);
+});
+
+test('1m analysis sends an unambiguous minute interval and survives rolling candles during the request', async ({ page }) => {
+  let snapshot = fixture('1m', 300);
+  const response = deferred();
+  const handled = deferred();
+  const requests: { candles: Candle[]; context: { symbol: string; timeframe: string; notes: string } }[] = [];
+  await page.route('**/api/analyze', async route => {
+    requests.push(route.request().postDataJSON());
+    await response.promise;
+    try { await fulfillAnalysis(route, 'one-minute-fixed-snapshot', 2); } catch { /* Cancellation is checked below. */ }
+    finally { handled.release(); }
+  });
+  await setupMarket(page, () => snapshot, '1m');
+  await expect(page.locator('.instrument-name .interval')).toHaveText('1M');
+  const expectedInput = structuredClone(snapshot.candles.slice(0, -1));
+  await page.getByRole('button', { name: /AI 分析/ }).first().click();
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0].context).toMatchObject({ symbol: 'SNDKUSDT', timeframe: '1m' });
+  expect(requests[0].context.notes).toContain('每根 K 线 60 秒');
+  expect(requests[0].candles).toEqual(expectedInput);
+
+  // Simulate three minute closes while the model is running, including the
+  // production 300-candle rolling limit and changing the excluded forming bar.
+  for (let index = 0; index < 3; index++) {
+    snapshot = nextBar(snapshot);
+    snapshot.candles = snapshot.candles.slice(-300);
+  }
+  snapshot.candles.at(-1)!.high += 20;
+  snapshot.candles.at(-1)!.volume += 50;
+  await page.locator('.market-refresh').click();
+  await expect(page.locator('.market-refresh')).toBeEnabled();
+  await expect(page.getByLabel('图表分析状态')).toContainText('正在分析');
+  await expect(page.getByLabel('图表分析状态')).toContainText('299 根');
+  await expect(page.getByLabel('图表分析状态')).toContainText('最多调用模型 2 次');
+  await expect(page.getByLabel('分析来源', { exact: true })).toBeDisabled();
+  expect(snapshot.candles[0].timestamp).toBeGreaterThan(expectedInput[0].timestamp);
+
+  response.release();
+  await handled.promise;
+  await expect(page.locator('.analysis-provenance')).toContainText('one-minute-fixed-snapshot');
+  await expect(page.locator('.analysis-provenance')).toContainText('已修正 1 次 · 共调用模型 2 次');
+  await expect(page.locator('.analysis-provenance')).not.toContainText('用量含两次调用');
+  await expect(page.getByLabel('分析任务状态')).toHaveClass(/phase-success/);
+  await expect(page.getByLabel('分析任务状态')).toContainText('行情已更新，当前结果需复核');
+  await expect(page.getByLabel('分析任务状态')).toContainText('固定输入 299 根');
+  await expect(page.getByLabel('分析任务状态')).toContainText(new Date(expectedInput.at(-1)!.timestamp * 1000).toISOString().slice(0, 16).replace('T', ' '));
+  await page.getByRole('tab', { name: /结构依据/ }).click();
+  await expect.poll(() => page.locator('.structure-row').count()).toBeGreaterThan(0);
+  expect(requests).toHaveLength(1);
+  expect(requests[0].candles).toEqual(expectedInput);
+  expect(requests[0].candles.some(candle => candle.timestamp > expectedInput.at(-1)!.timestamp)).toBe(false);
 });
 
 test('model errors remain visible through ordinary ticks and closed-history corrections', async ({ page }) => {

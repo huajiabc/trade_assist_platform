@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { LiveMarketQuery, MarketSnapshot } from '../shared/liveMarket';
+import { closedMarketCandles, type LiveMarketQuery, type MarketSnapshot } from '../shared/liveMarket';
 import { mergeRealtimeKline, realtimeKlineSchema, type RealtimeKline } from '../shared/realtime';
 import { reconcileRestSnapshot } from '../src/hooks/useMarketFeed';
 
@@ -18,6 +18,35 @@ const tick = (overrides: Partial<RealtimeKline> = {}): RealtimeKline => ({
 });
 
 describe('validated live candle merge', () => {
+  it('rolls one-minute candles at 60 seconds while retaining only closed candles for analysis', () => {
+    const minuteQuery: LiveMarketQuery = { ...query, interval: '1m' };
+    const snapshot: MarketSnapshot = {
+      ...initial(), interval: '1m',
+      candles: initial().candles.map((candle, index) => ({ ...candle, timestamp: START + index * 60 })),
+      serverTime: (START + 19 * 60 + 20) * 1_000,
+    };
+    const boundary = (START + 20 * 60) * 1_000;
+    const closing: RealtimeKline = {
+      ...tick(), interval: '1m', eventTime: boundary, closeTime: boundary - 1, closed: true,
+      candle: { ...snapshot.candles.at(-1)!, close: 108, volume: 150 },
+    };
+    expect(closedMarketCandles(snapshot)).toHaveLength(19);
+    const closed = mergeRealtimeKline(snapshot, closing, minuteQuery)!;
+    expect(closed.lastCandleClosed).toBe(true);
+    expect(closedMarketCandles(closed)).toHaveLength(20);
+    const next: RealtimeKline = {
+      ...closing, eventTime: boundary + 100, closeTime: boundary + 60_000 - 1, closed: false,
+      candle: { ...closing.candle, timestamp: START + 20 * 60 },
+    };
+    const merged = mergeRealtimeKline(closed, next, minuteQuery, closing.eventTime)!;
+    expect(merged.candles).toHaveLength(20);
+    expect(merged.candles[0].timestamp).toBe(START + 60);
+    expect(merged.candles.at(-1)).toEqual(next.candle);
+    expect(closedMarketCandles(merged).at(-1)).toEqual(closing.candle);
+    expect(merged.lastCandleClosed).toBe(false);
+    expect(snapshot.candles.at(-1)!.close).toBe(105);
+    expect(() => mergeRealtimeKline(snapshot, next, minuteQuery)).toThrow('收盘数据缺失');
+  });
   it('updates the current OHLCV bar without mutating history', () => {
     const snapshot = initial();
     const merged = mergeRealtimeKline(snapshot, tick(), query)!;

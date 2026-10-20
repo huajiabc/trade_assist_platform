@@ -3,7 +3,7 @@ import type { RuleIndicatorZone } from '../../shared/indicators';
 import type { Candle } from '../../shared/market';
 import type { Viewport } from './coordinates';
 import { distanceToIndicatorGeometry, indicatorDisplayEndTime, mapIndicatorZone, type IndicatorGeometry } from './indicatorCoordinates';
-import type { LabelBox } from './labelLayout';
+import { ChartLabelRegistry, type LabelBox } from './labelLayout';
 import { drawZoneLabel } from './zoneLabel';
 
 type Target = Parameters<IPrimitivePaneRenderer['draw']>[0];
@@ -28,6 +28,8 @@ export class IndicatorOverlay implements ISeriesPrimitive {
     { zOrder: () => 'top', renderer: () => ({ draw: target => this.draw(target, false) }) },
   ];
 
+  constructor(private readonly registry = new ChartLabelRegistry()) {}
+  private occupied: LabelBox[] = [];
   attached(parameters: SeriesAttachedParameter): void { this.attachment = parameters; }
   detached(): void { this.attachment = null; this.drawn = []; this.labels = []; }
   paneViews(): readonly IPrimitivePaneView[] { return this.views; }
@@ -79,7 +81,10 @@ export class IndicatorOverlay implements ISeriesPrimitive {
         for (const entry of this.drawn) this.drawZone(ctx, entry, background);
         if (background) return;
         this.labels = [];
-        for (const entry of this.drawn) this.drawLabel(ctx, entry);
+        this.occupied = this.registry.begin('indicators', 3);
+        const inherited = this.occupied.length;
+        for (const entry of [...this.drawn].sort((a, b) => Number(b.zone.id === this.selectedId) - Number(a.zone.id === this.selectedId))) this.drawLabel(ctx, entry);
+        this.registry.commit('indicators', this.occupied, inherited);
       } finally { ctx.restore(); }
     });
   }
@@ -114,7 +119,7 @@ export class IndicatorOverlay implements ISeriesPrimitive {
     try {
       ctx.globalAlpha = retired(zone) && !selected ? .65 : 1;
       ctx.fillStyle = color;
-      const box = drawZoneLabel(ctx, zone.type, this.paintBounds(g), this.viewport);
+      const box = drawZoneLabel(ctx, zone.type, this.paintBounds(g), this.viewport, this.occupied);
       if (box) this.labels.push({ id: zone.id, box });
     } finally { ctx.restore(); }
   }

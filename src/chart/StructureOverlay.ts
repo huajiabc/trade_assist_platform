@@ -8,33 +8,38 @@ import type {
   SeriesAttachedParameter,
   UTCTimestamp,
 } from 'lightweight-charts';
+import type { RuleStructure } from '../../shared/structureEvidence';
 import type { Structure } from '../../shared/analysis';
 import type { Candle } from '../../shared/market';
 import { distanceToGeometry, mapStructure, type StructureGeometry, type Viewport } from './coordinates';
 import { indicatorDisplayEndTime } from './indicatorCoordinates';
-import { reserveLabel, type LabelBox } from './labelLayout';
+import { ChartLabelRegistry, labelDensity, placeLabel, type LabelBox } from './labelLayout';
 import { drawZoneLabel } from './zoneLabel';
 
 type Target = Parameters<IPrimitivePaneRenderer['draw']>[0];
-interface DrawItem { structure: Structure; geometry: StructureGeometry }
+export type ChartStructure = Structure & Partial<Pick<RuleStructure, 'source' | 'importance' | 'timing'>>;
+interface DrawItem { structure: ChartStructure; geometry: StructureGeometry }
 
 /** A native chart primitive: LWC invalidates it on every scale/viewport change. */
 export class StructureOverlay implements ISeriesPrimitive {
   private attachment: SeriesAttachedParameter | null = null;
-  private structures: Structure[] = [];
+  private structures: ChartStructure[] = [];
   private selectedId: string | null = null;
   private priceMultiplier = 1;
   private candles: readonly Candle[] = [];
   private dimmed = false;
   private lastItems: DrawItem[] = [];
+  private labels: {id: string; box: LabelBox}[] = [];
   private viewport: Viewport = { width: 0, height: 0 };
   private readonly views: IPrimitivePaneView[] = [
     { zOrder: () => 'bottom', renderer: () => ({ draw: (target) => this.draw(target, true) }) },
     { zOrder: () => 'top', renderer: () => ({ draw: (target) => this.draw(target, false) }) },
   ];
 
+  constructor(private readonly registry = new ChartLabelRegistry()) {}
+
   attached(parameters: SeriesAttachedParameter): void { this.attachment = parameters; }
-  detached(): void { this.attachment = null; this.lastItems = []; }
+  detached(): void { this.attachment = null; this.lastItems = []; this.labels = []; }
   paneViews(): readonly IPrimitivePaneView[] { return this.views; }
 
   autoscaleInfo(from: Logical, to: Logical): AutoscaleInfo | null {
@@ -57,7 +62,7 @@ export class StructureOverlay implements ISeriesPrimitive {
     this.attachment?.requestUpdate();
   }
 
-  setData(structures: Structure[], selectedId: string | null, candles: readonly Candle[] = [], dimmed = false): void {
+  setData(structures: ChartStructure[], selectedId: string | null, candles: readonly Candle[] = [], dimmed = false): void {
     this.structures = structures;
     this.selectedId = selectedId;
     this.candles = candles;
@@ -89,9 +94,11 @@ export class StructureOverlay implements ISeriesPrimitive {
 
   hitTest(x: number, y: number): PrimitiveHoveredItem | null {
     if (x < 0 || y < 0 || x > this.viewport.width || y > this.viewport.height) return null;
+    const label = this.labels.find(({ box }) => x >= box.left && x <= box.left + box.width && y >= box.top && y <= box.top + box.height);
+    if (label) return { externalId: label.id, zOrder: 'top', cursorStyle: 'pointer', distance: 0 };
     const hits = this.lastItems.map(({ geometry, structure }) => ({
       geometry, structure, distance: distanceToGeometry(geometry, x, y),
-    })).filter(({ distance }) => distance <= 9).sort((a, b) =>
+    })).filter(({ distance, structure }) => distance <= 9 && (structure.id === this.selectedId || this.density().showLocal || structure.importance !== 'local')).sort((a, b) =>
       Number(b.geometry.kind === 'point') - Number(a.geometry.kind === 'point') || a.distance - b.distance,
     );
     const hit = hits[0];
@@ -113,21 +120,45 @@ export class StructureOverlay implements ISeriesPrimitive {
         ctx.restore();
       }
       if (background) { ctx.restore(); return; }
-      const occupied: LabelBox[] = [];
+      this.labels = [];
+      const occupied = this.registry.begin('structures', 0);
+      const inherited = occupied.length;
+      const density = this.density();
+      const obstacles = this.lastItems.some(item => item.geometry.kind !== 'zone') ? this.candleObstacles() : [];
+      let count = 0;
       const labels = [...this.lastItems].sort((a, b) => Number(b.structure.id === this.selectedId) - Number(a.structure.id === this.selectedId)
+        || Number(b.structure.importance === 'major') - Number(a.structure.importance === 'major')
+        || Number(['BOS', 'CHoCH'].includes(b.structure.type)) - Number(['BOS', 'CHoCH'].includes(a.structure.type))
         || b.geometry.x2 - a.geometry.x2);
       for (const { structure, geometry } of labels) {
         ctx.save();
         if ((this.selectedId || this.dimmed) && structure.id !== this.selectedId) ctx.globalAlpha = .4;
-        this.drawLabel(ctx, structure, geometry, occupied);
+        if (structure.id === this.selectedId || (count < density.main && (density.showLocal || structure.importance !== 'local'))) {
+          const before = occupied.length; this.drawLabel(ctx, structure, geometry, occupied, obstacles); if (occupied.length > before) count++;
+        }
         ctx.restore();
       }
+      this.registry.commit('structures', occupied, inherited);
       ctx.restore();
     });
   }
 
-  private drawItem(ctx: CanvasRenderingContext2D, structure: Structure, geometry: StructureGeometry, background: boolean): void {
+  private density() { return labelDensity(this.attachment?.chart.timeScale().options?.().barSpacing ?? 8, this.viewport.width); }
+  private candleObstacles(): LabelBox[] {
+    if (!this.attachment) return [];
+    const { chart, series } = this.attachment;
+    const half = Math.max(1, Math.min(5, (chart.timeScale().options?.().barSpacing ?? 8) * .35));
+    return this.candles.flatMap(candle => {
+      const x = chart.timeScale().timeToCoordinate(candle.timestamp as UTCTimestamp);
+      const top = series.priceToCoordinate(Math.max(candle.open, candle.close) * this.priceMultiplier);
+      const bottom = series.priceToCoordinate(Math.min(candle.open, candle.close) * this.priceMultiplier);
+      return x === null || top === null || bottom === null || x < 0 || x > this.viewport.width ? [] : [{ left: x - half, top, width: half * 2, height: Math.max(2, bottom - top) }];
+    });
+  }
+
+  private drawItem(ctx: CanvasRenderingContext2D, structure: ChartStructure, geometry: StructureGeometry, background: boolean): void {
     const selected = structure.id === this.selectedId;
+    if (!selected && !this.density().showLocal && structure.importance === 'local') return;
     const candidate = structure.status === 'candidate';
     const color = this.color(structure);
     const { x1, x2, y1, y2 } = geometry;
@@ -169,7 +200,7 @@ export class StructureOverlay implements ISeriesPrimitive {
       const closeY = event && this.attachment?.series.priceToCoordinate(event.close * this.priceMultiplier);
       const highY = event && this.attachment?.series.priceToCoordinate(event.high * this.priceMultiplier);
       const lowY = event && this.attachment?.series.priceToCoordinate(event.low * this.priceMultiplier);
-      if (typeof closeY === 'number' && typeof highY === 'number' && typeof lowY === 'number') {
+      if ((selected || this.density().mode === 'detail') && typeof closeY === 'number' && typeof highY === 'number' && typeof lowY === 'number') {
         ctx.strokeStyle = this.alpha(color, .6); ctx.lineWidth = selected ? 1.4 : .8;
         ctx.strokeRect(x2 - 4, Math.min(highY, lowY) - 3, 8, Math.max(7, Math.abs(lowY - highY) + 6));
         ctx.beginPath(); ctx.moveTo(x2, y1); ctx.lineTo(x2, closeY); ctx.stroke();
@@ -189,21 +220,19 @@ export class StructureOverlay implements ISeriesPrimitive {
 
   private alpha(hex: string, opacity: number): string { return `rgba(${parseInt(hex.slice(1, 3), 16)},${parseInt(hex.slice(3, 5), 16)},${parseInt(hex.slice(5, 7), 16)},${opacity})`; }
 
-  private drawLabel(ctx: CanvasRenderingContext2D, structure: Structure, geometry: StructureGeometry, occupied: LabelBox[]): void {
+  private drawLabel(ctx: CanvasRenderingContext2D, structure: Structure, geometry: StructureGeometry, occupied: LabelBox[], obstacles: LabelBox[]): void {
     const selected = structure.id === this.selectedId;
     if (geometry.kind === 'zone') {
       ctx.save();
       ctx.fillStyle = selected ? '#d1d4dc' : this.color(structure);
       const box = drawZoneLabel(ctx, structure.type, {
         left: geometry.x1, top: geometry.y1, right: geometry.x2, bottom: geometry.y2,
-      }, this.viewport);
-      if (box) occupied.push(box);
+      }, this.viewport, occupied);
+      if (box) this.labels.push({id: structure.id, box});
       ctx.restore();
       return;
     }
-    if (!selected && occupied.length >= 20) return;
-    const name = structure.type === 'BOS' ? 'BOS · 结构延续' : structure.type === 'CHoCH' ? 'CHoCH · 转向观察'
-      : structure.type;
+    const name = structure.type;
     const text = name + (structure.status === 'candidate' ? ' ◇候选' : '');
     const high = structure.type === 'HH' || structure.type === 'LH';
     const { x1, x2, y1 } = geometry;
@@ -214,15 +243,20 @@ export class StructureOverlay implements ISeriesPrimitive {
     const width = ctx.measureText(text).width;
     const left = Math.max(4, Math.min(x - width / 2, this.viewport.width - width - 4));
     const labelY = Math.max(9, Math.min(y, this.viewport.height - 9));
-    const box = { left: left - 4, top: labelY - 7, width: width + 8, height: 14 };
-    if (!reserveLabel(box, occupied, selected)) { ctx.restore(); return; }
+    const box = placeLabel({ left: left - 4, top: labelY - 7, width: width + 8, height: 14 }, this.viewport, occupied, selected, obstacles);
+    if (!box) { ctx.restore(); return; }
+    this.labels.push({id: structure.id, box});
+    if (Math.abs(box.top + 7 - labelY) > 8) {
+      ctx.strokeStyle = this.alpha(this.color(structure), .4); ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(x, y1); ctx.lineTo(Math.max(box.left, Math.min(x, box.left + box.width)), box.top + 7); ctx.stroke();
+    }
     // Price/time anchors remain untouched. Only overlapping text is suppressed.
     ctx.fillStyle = selected ? '#363a45' : 'rgba(19,23,34,.94)';
     ctx.fillRect(box.left, box.top, box.width, box.height);
     ctx.fillStyle = selected ? '#f0f3fa' : this.color(structure);
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
-    ctx.fillText(text, left, labelY);
+    ctx.fillText(text, box.left + 4, box.top + 7);
     ctx.restore();
   }
 }

@@ -16,6 +16,7 @@ function onlyTrailingAnnotations(candles: Candle[]): Analysis {
       breakouts: [],
     },
     opportunities: [], tradeSetups: [], liquiditySweeps: [],
+    tradePlanning: { status: 'no-setup', reason: '历史分布测试仅保留结构依据，不提供开仓或文字观察计划。' },
   }, candles);
 }
 

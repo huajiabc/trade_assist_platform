@@ -98,6 +98,13 @@ main { padding: 20px 24px 0; max-width: 1920px; }
 .analysis-counts strong { font-family: 'Segoe UI', sans-serif; font-size: 22px; font-weight: 500; }
 .analysis-counts span { font-size: 10px; }
 .analysis-provenance { flex-wrap: wrap; line-height: 1.8; font-size: 9px; }
+.key-level { width: 100%; display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; align-items: start; background: transparent; border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 3px; padding: 12px 4px; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.key-level:hover { background: #1a202d; }
+.key-level.is-selected { background: #28251f; box-shadow: inset 2px 0 #f0c674; }
+.key-level:focus-visible { outline: 1px solid #82a5ff; outline-offset: -1px; }
+.key-level > div > span { overflow-wrap: anywhere; }
+.key-level strong { max-width: 112px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.key-level.is-selected strong { color: #f0c674; }
 .key-level small { font-size: 10px; color: #9299a8; }
 .uncertainty-box { background: #1b1f27; border-color: #3a3830; }
 .uncertainty-box li { font-size: 10px; line-height: 1.9; }
@@ -246,9 +253,31 @@ main { padding: 20px 24px 0; max-width: 1920px; }
 .advanced-layer-bar label { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; color: #b2b5be; font-size: 10px; line-height: 1.7; }
 .advanced-layer-bar input { accent-color: #618cfa; width: 12px; height: 12px; margin: 0; }
 .advanced-layer-swatch { width: 9px; height: 9px; border: 1px solid; display: inline-block; }
+.advanced-layer-swatch.key-level-swatch { width: 12px; height: 0; border: 0; border-top: 1px dashed #9cb4db; }
 .trade-swatch { border-color: #089981; background: linear-gradient(0deg, #a43a4a99 50%, #08998166 50%); }
 .sweep-swatch { border-color: #d3a350; background: #d3a35030; border-radius: 50%; }
 .advanced-layer-count { color: #9299a8; font-size: 9px; font-variant-numeric: tabular-nums; }
+.trade-plan-status { padding: 10px 15px; border-bottom: 1px solid #2a303b; background: #151b27; min-width: 0; }
+.trade-plan-status-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; color: #b9c9ed; font-size: 11px; line-height: 1.8; }
+.trade-plan-status-heading > svg { flex-shrink: 0; }
+.trade-plan-status-heading strong { font-weight: 550; }
+.trade-plan-counts { margin-left: auto; color: #929daf; font-size: 10px; font-variant-numeric: tabular-nums; }
+.trade-plan-status p { margin: 5px 0 0; font-size: 10px; line-height: 1.8; color: #aab4c6; overflow-wrap: anywhere; }
+.trade-plan-status .trade-plan-observations, .trade-plan-status .trade-plan-snapshot { color: #8591a5; font-size: 9px; }
+.trade-plan-trigger > span { margin-right: 8px; color: #b5c8ea; }
+.trade-plan-status.state-hidden .trade-plan-status-heading { color: #d6bb85; }
+.trade-plan-status-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; }
+.trade-plan-status-actions label { display: inline-flex; align-items: center; min-width: 0; gap: 6px; font-size: 10px; color: #94a3bc; }
+.trade-plan-status-actions select { min-width: 0; max-width: 180px; min-height: 28px; padding: 3px 5px; background: #1c2535; color: #b7c7e1; border: 1px solid #394b65; border-radius: 3px; font-size: 10px; }
+.trade-plan-status-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 28px; padding: 3px 8px; color: #9fb8e9; border: 1px solid #33435d; border-radius: 3px; background: #1b2639; font-size: 10px; }
+.trade-plan-status-actions button:hover { color: #d2e0ff; border-color: #547ecf; }
+.tabs > button .text-observation-count { font-size: 9px; font-weight: 400; color: #929daf; }
+@media (max-width: 700px) {
+  .trade-plan-status { padding: 9px 10px; }
+  .trade-plan-counts { flex: 1 1 100%; margin-left: 22px; font-size: 9px; }
+  .evidence-toolbar .tabs > button#opportunities-tab { flex-wrap: wrap; justify-content: flex-start; column-gap: 6px; }
+  .tabs > button .text-observation-count { flex-basis: 100%; text-align: left; font-size: 9px; margin-top: -4px; }
+}
 .advanced-section-title { display: flex; align-items: center; gap: 7px; margin: 5px 0 8px; color: #b9c9ed; }
 .advanced-section-title h3 { font-size: 12px; font-weight: 600; margin: 0; color: #d1d4dc; }
 .advanced-section-title > span { margin-left: auto; color: #9299a8; font-size: 10px; }
@@ -375,3 +404,84 @@ main { padding: 20px 24px 0; max-width: 1920px; }
   .advanced-reasons > div { gap: 5px; }
   .chart-expanded .chart-host { height: calc(100dvh - 385px); }
 }
+
+.trade-tracking { margin-top: 10px; padding: 9px 10px; border-left: 2px solid #55719c; background: #111823; color: #aab4c6; font-size: 10px; line-height: 1.8; min-width: 0; overflow-wrap: anywhere; }
+.trade-tracking-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 12px; }
+.trade-tracking-summary strong { font-weight: 550; color: #b8cdec; }
+.trade-tracking-summary span, .trade-tracking small { color: #889ab4; font-size: 9px; }
+.trade-tracking p { margin: 5px 0; }
+.trade-tracking.phase-conditions-met, .trade-tracking.phase-targets-touched { border-color: #2bc5a8; }
+.trade-tracking.phase-conditions-met .trade-tracking-summary strong, .trade-tracking.phase-targets-touched .trade-tracking-summary strong { color: #63c9b4; }
+.trade-tracking.phase-invalidated, .trade-tracking.phase-stop-touched { border-color: #b65e6c; }
+.trade-tracking.phase-invalidated .trade-tracking-summary strong, .trade-tracking.phase-stop-touched .trade-tracking-summary strong { color: #df98a4; }
+.trade-tracking.phase-needs-review, .trade-tracking.phase-ambiguous, .trade-tracking.phase-expired { border-color: #c2a063; }
+.trade-tracking-details summary { color: #9fb8e9; cursor: pointer; padding: 4px 0; }
+.trade-tracking-steps, .trade-tracking-events { padding-left: 20px; margin: 5px 0; }
+.trade-tracking-steps li, .trade-tracking-events li { padding: 3px 0; }
+.trade-tracking-steps strong, .trade-tracking-steps span, .trade-tracking-events time, .trade-tracking-events span { display: block; }
+.trade-tracking-steps strong { color: #9aa8bc; font-size: 10px; font-weight: 500; }
+.trade-tracking-steps .is-complete strong { color: #63c9b4; }
+.trade-tracking-events time { font-variant-numeric: tabular-nums; font-size: 9px; color: #889ab4; }
+.trade-tracking.is-compact { margin-top: 7px; padding: 6px 8px; }
+
+/* Research hierarchy: quiet evidence, readable primary anchors, explicit plan risk. */
+.hierarchy-layer-bar { display:flex; flex-wrap:wrap; gap:10px 22px; padding:12px 16px; border-bottom:1px solid #262b35; background:#141923; }
+.hierarchy-layer-bar label { display:flex; align-items:center; gap:7px; font-size:12px; color:#d1d4dc; cursor:pointer; }
+.hierarchy-layer-bar small { color:#7e8a9f; font-size:10px; }
+.hierarchy-layer-bar input { accent-color:#6d98f4; }
+.chart-density-status { color:#8ea5c9; font-size:10px; margin-left:auto; }
+.evidence-coverage { padding:10px 16px; border-top:1px solid #262c38; font-size:11px; color:#929eb2; line-height:1.65; }
+.evidence-coverage strong { color:#c8d1e2; font-size:11px; }
+.evidence-coverage p { margin:4px 0; }
+.evidence-coverage small { font-size:10px; }
+.coverage-windows { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0; }
+.coverage-windows span { background:#1b2230; padding:2px 7px; border-radius:3px; }
+.coverage-windows b { color:#b1c8ed; margin-left:8px; }
+.evidence-detail { padding:14px 18px; background:#171f2b; border-top:1px solid #394a65; font-size:12px; line-height:1.7; }
+.evidence-detail strong { color:#c3d8fa; }
+.evidence-detail dl { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 20px; margin:12px 0; }
+.evidence-detail dl div { min-width:0; }
+.evidence-detail dt { color:#7f96b8; font-size:10px; }
+.evidence-detail dd { margin:0; color:#bfcde0; overflow-wrap:anywhere; }
+.evidence-detail small,.rule-leg-explainer { font-size:10px; color:#8298b7; }
+.rule-leg-explainer { padding:0 18px; }
+.rule-structure-catalog { padding:18px 20px; border-bottom:1px solid #2a303a; }
+.rule-structure-catalog h3 { font-size:13px; margin:0; color:#c0d2eb; }
+.rule-structure-catalog h3 small { font-size:11px; color:#7c92b2; font-weight:400; margin-left:10px; }
+.rule-structure-catalog p { font-size:11px; color:#7c8fa9; line-height:1.7; }
+.rule-structure-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); gap:1px 14px; max-height:280px; overflow:auto; margin:12px 0; }
+.rule-structure-row { display:flex; align-items:center; gap:10px; text-align:left; padding:9px 6px; color:#9eb6d7; border:0; border-bottom:1px solid #252d3b; background:transparent; cursor:pointer; font-size:11px; }
+.rule-structure-row b { width:42px; color:#a8c5f1; }
+.rule-structure-row span { color:#8191a8; }
+.rule-structure-row strong { margin-left:auto; font-variant-numeric:tabular-nums; }
+.rule-structure-row:hover,.rule-structure-row[aria-pressed=true] { background:#223149; }
+.rule-structure-catalog summary { color:#8ca6ca; font-size:11px; cursor:pointer; }
+.research-stages { margin:20px 0; padding-top:2px; border-top:1px solid #2c3442; font-size:11px; line-height:1.8; color:#a6bbd8; }
+.research-stages h4 { color:#ccdaed; font-size:11px; margin:18px 0 6px; letter-spacing:.04em; }
+.research-stages p { margin:5px 0; }
+.research-stages dl { margin:6px 0; }
+.research-stages dt { color:#718bad; }
+.research-stages dd { margin:0; }
+.research-stages .related-structures { max-height:104px; overflow:auto; }
+.research-stages .related-structures button { font-size:10px; overflow-wrap:anywhere; }
+.research-incomplete { font-size:10px; line-height:1.8; color:#909ab0; border-top:1px solid #2a303a; padding-top:12px; }
+.area-review { padding:6px 0; }
+.area-review button { color:#a3c4f6; background:transparent; border:0; cursor:pointer; font-size:10px; padding:0; text-align:left; }
+.research-scenario { border-left:2px solid #486183; padding:4px 12px; margin-top:10px; }
+.plan-evidence-audit { margin:12px 0; padding:10px 12px; background:#182130; color:#8ca3c4; font-size:11px; line-height:1.75; }
+.plan-evidence-audit strong { color:#b6c9e5; font-weight:500; }
+.plan-evidence-audit p { margin:4px 0; }
+.plan-evidence-warning { color:#d7b784; }
+@media(max-width:680px) { .hierarchy-layer-bar small { display:none; } .evidence-detail dl { grid-template-columns:1fr; } .chart-density-status { display:none; } }
+
+.trade-price-grid small { color:#9299a8; font-size:10px; font-variant-numeric:tabular-nums; }
+.trade-stop-audit { margin:0 0 17px; padding:12px; background:#151c27; border-left:2px solid #5c6d86; }
+.stop-audit-heading { display:flex; justify-content:space-between; gap:12px; align-items:baseline; margin-bottom:10px; }
+.stop-audit-heading strong { font-size:11px; color:#b6c9e5; font-weight:500; }
+.stop-audit-heading span { font-size:10px; color:#9299a8; }
+.trade-stop-audit dl { margin:0; display:grid; grid-template-columns:1fr 1fr; gap:10px 12px; }
+.trade-stop-audit dl > div { min-width:0; }
+.trade-stop-audit dt { font-size:10px; color:#9299a8; margin-bottom:4px; }
+.trade-stop-audit dd { margin:0; font-size:12px; color:#d1d4dc; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.trade-stop-audit dd small { color:#adb8c9; display:block; font-size:10px; margin-top:3px; }
+.trade-stop-audit p { color:#9299a8; font-size:10px; line-height:1.7; margin:10px 0 0; }

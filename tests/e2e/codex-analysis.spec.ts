@@ -15,7 +15,7 @@ test('Codex source requires a manual request and renders validated structures wi
     requests.push(route.request().postDataJSON());
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
       analysis: createMockAnalysis(SAMPLE_CANDLES), source: 'ai', model: 'codex-test-model', provider: 'codex', billing: 'chatgpt-plan',
-      analyzedBars: SAMPLE_CANDLES.length, generatedAt: new Date().toISOString(), usage: { inputTokens: 12000, cachedInputTokens: 1000, outputTokens: 2400 },
+      analyzedBars: SAMPLE_CANDLES.length, generatedAt: new Date().toISOString(), analysisAttempts: 2, usage: { inputTokens: 12000, cachedInputTokens: 1000, outputTokens: 2400 },
     }) });
   });
   await page.goto('/?demo=smc');
@@ -28,6 +28,7 @@ test('Codex source requires a manual request and renders validated structures wi
   expect(requests[0]).toMatchObject({ mode: 'ai', provider: 'codex' });
   await expect(page.locator('.source-badge').first()).toHaveText('Codex 分析');
   await expect(page.locator('.analysis-provenance')).toContainText('Codex 额度 · codex-test-model');
+  await expect(page.locator('.analysis-provenance')).toContainText('已修正 1 次 · 共调用模型 2 次，用量含两次调用');
   await expect(page.getByLabel('本次模型用量')).toContainText('12,000');
   await page.getByRole('tab', { name: /结构依据/ }).click();
   const firstStructure = page.locator('.structure-row').first();

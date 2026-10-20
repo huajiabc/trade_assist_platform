@@ -251,6 +251,39 @@ describe('Codex subscription HTTP boundary (injected process, no real usage)', (
 });
 
 describe('advanced visualization HTTP validation', () => {
+  it('returns a pending numeric plan with its explicit trigger and decision reason', async () => {
+    const analysis = createMockAnalysis(SAMPLE_CANDLES);
+    analysis.tradeSetups[0].trigger = '等待后续回踩后复核，当前未触发；这些数值只描述条件情景。';
+    const result = await request(createApp({ config: configured, provider: { analyze: async () => analysis } }))
+      .post('/api/analyze').send(body(SAMPLE_CANDLES, 'ai')).expect(200);
+    expect(result.body.analysis).toMatchObject({ schemaVersion: '1.5', tradePlanning: { status: 'conditional' } });
+    expect(result.body.analysis.tradeSetups[0].trigger).toBe(analysis.tradeSetups[0].trigger);
+    expect(result.body.analysisAttempts).toBe(1);
+  });
+
+  it('keeps watch-only opportunities without inventing chart prices and exposes the model reason', async () => {
+    const analysis = createMockAnalysis(SAMPLE_CANDLES);
+    analysis.tradeSetups = [];
+    analysis.tradePlanning = { status: 'watch-only', reason: '价格仍处于区间中部，当前无法确定有依据的保护止损价。' };
+    const result = await request(createApp({ config: configured, provider: { analyze: async () => analysis } }))
+      .post('/api/analyze').send(body(SAMPLE_CANDLES, 'ai')).expect(200);
+    expect(result.body.analysis.tradeSetups).toEqual([]);
+    expect(result.body.analysis.opportunities).toEqual(analysis.opportunities);
+    expect(result.body.analysis.tradePlanning).toEqual(analysis.tradePlanning);
+  });
+
+  it('rejects contradictory plan decisions instead of silently creating or removing candidate prices', async () => {
+    const analysis = createMockAnalysis(SAMPLE_CANDLES);
+    analysis.tradePlanning.status = 'no-setup';
+    const analyze = vi.fn(async () => analysis);
+    const result = await request(createApp({ config: configured, provider: { analyze } }))
+      .post('/api/analyze').send(body(SAMPLE_CANDLES, 'ai')).expect(502);
+    expect(result.body.error.code).toBe('PROVIDER_INVALID_OUTPUT');
+    expect(result.body.analysis).toBeUndefined();
+    expect(analyze).toHaveBeenCalledTimes(2);
+    expect(analysis.tradeSetups.length).toBeGreaterThan(0);
+  });
+
   it('rejects a model plan with the stop on the profit side before exposing chart data', async () => {
     const invalid = createMockAnalysis(SAMPLE_CANDLES);
     const setup = invalid.tradeSetups[0];
@@ -273,11 +306,11 @@ describe('advanced visualization HTTP validation', () => {
   });
 
   it('migrates old analysis without inventing numeric entries or liquidity observations', async () => {
-    const { tradeSetups: _setups, liquiditySweeps: _sweeps, priceAction: _pa, ...current } = createMockAnalysis(SAMPLE_CANDLES);
+    const { tradeSetups: _setups, liquiditySweeps: _sweeps, priceAction: _pa, tradePlanning: _planning, research: _research, ...current } = createMockAnalysis(SAMPLE_CANDLES);
     const legacy = { ...current, schemaVersion: '1.0' };
     const result = await request(createApp({ config: configured, provider: { analyze: async () => legacy } }))
       .post('/api/analyze').send(body(SAMPLE_CANDLES, 'ai')).expect(200);
-    expect(result.body.analysis).toMatchObject({ schemaVersion: '1.2', tradeSetups: [], liquiditySweeps: [],
+    expect(result.body.analysis).toMatchObject({ schemaVersion: '1.5', tradeSetups: [], liquiditySweeps: [],
       priceAction: { zones: [], legs: [], patterns: [], breakouts: [] } });
     expect(result.body.analysis.structures).toEqual(legacy.structures);
   });
@@ -288,7 +321,7 @@ describe('price action HTTP contract', () => {
     const output = createMockAnalysis(PA_SAMPLE_CANDLES);
     const result = await request(createApp({ config: configured, provider: { analyze: async () => output } }))
       .post('/api/analyze').send(body(PA_SAMPLE_CANDLES, 'ai')).expect(200);
-    expect(result.body.analysis.schemaVersion).toBe('1.2');
+    expect(result.body.analysis.schemaVersion).toBe('1.5');
     expect(result.body.analysis.priceAction).toEqual(output.priceAction);
     expect(output.priceAction.patterns.length).toBeGreaterThan(0);
     expect(result.body.source).toBe('ai');
@@ -305,11 +338,12 @@ describe('price action HTTP contract', () => {
   });
 
   it('migrates a strict 1.1 response to an explicitly empty PA layer', async () => {
-    const { priceAction: _pa, ...old } = createMockAnalysis(SAMPLE_CANDLES);
+    const { priceAction: _pa, tradePlanning: _planning, research: _research, ...current } = createMockAnalysis(SAMPLE_CANDLES);
+    const old = { ...current, tradeSetups: current.tradeSetups.map(({ trigger: _trigger, tracking: _tracking, basis: _basis, ...setup }) => setup) };
     const result = await request(createApp({ config: configured, provider: {
       analyze: async () => ({ ...old, schemaVersion: '1.1' }),
     } })).post('/api/analyze').send(body(SAMPLE_CANDLES, 'ai')).expect(200);
-    expect(result.body.analysis.schemaVersion).toBe('1.2');
+    expect(result.body.analysis.schemaVersion).toBe('1.5');
     expect(result.body.analysis.priceAction).toMatchObject({ zones: [], legs: [], patterns: [], breakouts: [] });
     expect(result.body.analysis.structures).toEqual(old.structures);
   });

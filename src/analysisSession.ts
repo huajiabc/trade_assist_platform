@@ -1,3 +1,4 @@
+import { extractStructureEvidence } from '../shared/structureEvidence';
 import type { Analysis } from '../shared/analysis';
 import { MAX_ANALYSIS_CANDLES, type Candle } from '../shared/market';
 import { matchesPAPattern } from '../shared/priceAction';
@@ -67,6 +68,13 @@ export function projectAnalysisForCandles(analysis: Analysis, candles: Candle[],
     && (event.retestTime === null || times.has(event.retestTime)) && (event.confirmationTime === null || times.has(event.confirmationTime))
     && unchangedBetween(event.breakoutTime, event.confirmationTime ?? event.retestTime ?? event.breakoutTime));
   const evidenceIds = new Set([...structures, ...zones, ...legs, ...patterns, ...breakouts].map(item => item.id));
+  const rules = extractStructureEvidence(snapshotCandles ?? candles);
+  for (const item of rules.structures) {
+    const from = Math.min(item.timing.originTime, ...item.evidenceTimes);
+    const to = Math.max(item.timing.formedAt, item.timing.confirmedAt ?? item.timing.formedAt, ...item.evidenceTimes);
+    if (times.has(from) && times.has(to) && unchangedBetween(from, to, item.type === 'FVG' ? 0 : item.scale)) evidenceIds.add(item.id);
+  }
+  for (const leg of rules.legs) if (times.has(leg.startTime) && times.has(leg.timing.confirmedAt!) && unchangedBetween(leg.startTime, leg.timing.confirmedAt!, 5)) evidenceIds.add(leg.id);
   const opportunities = analysis.opportunities.filter(item => item.structureIds.every(id => evidenceIds.has(id)));
   const opportunityIds = new Set(opportunities.map(item => item.id));
   const tradeSetups = analysis.tradeSetups.filter(item => times.has(item.anchorTime) && unchangedBetween(item.anchorTime, item.anchorTime) && item.structureIds.every(id => evidenceIds.has(id))

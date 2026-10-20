@@ -3,7 +3,7 @@ import type { Candle } from '../../shared/market';
 import type { PAZone, PALeg, PAPattern, PABreakout, PriceAction } from '../../shared/priceAction';
 import { formatPrice } from '../../shared/format';
 import type { Viewport } from './coordinates';
-import { reserveLabel, type LabelBox } from './labelLayout';
+import { ChartLabelRegistry, labelDensity, placeLabel, type LabelBox } from './labelLayout';
 import { ALL_PA_LAYERS, distanceToPAGeometry, findPAItem, mapPABreakout, mapPALeg, mapPAPattern, mapPAZone, paItemBounds,
   type PAGeometry, type PAItem, type PALayerVisibility, type PAPoint } from './priceActionCoordinates';
 
@@ -30,6 +30,7 @@ export class PriceActionOverlay implements ISeriesPrimitive {
     { zOrder: () => 'top', renderer: () => ({ draw: (target) => this.draw(target, false) }) },
   ];
 
+  constructor(private readonly registry = new ChartLabelRegistry()) {}
   attached(parameters: SeriesAttachedParameter): void { this.attachment = parameters; }
   detached(): void { this.attachment = null; this.drawn = []; this.labels = []; this.badgeHits = []; }
   paneViews(): readonly IPrimitivePaneView[] { return this.views; }
@@ -56,7 +57,7 @@ export class PriceActionOverlay implements ISeriesPrimitive {
     if (label) return { externalId: `pa:${label.id}`, zOrder: 'top', cursorStyle: 'pointer', distance: 0 };
     const badge = this.badgeHits.find((entry) => Math.hypot(x - entry.x, y - entry.y) <= 8);
     if (badge) return { externalId: `pa:${badge.id}`, zOrder: 'top', cursorStyle: 'pointer', distance: 0 };
-    const hit = this.drawn.map(({ item, geometry }) => ({ item, distance: geometry.kind === 'pattern'
+    const hit = this.drawn.filter(({ item }) => this.selectedId === item.id || labelDensity(this.attachment?.chart.timeScale().options().barSpacing ?? 8, this.viewport.width).showLocal || !('kind' in item && ['pin-bar', 'engulfing', 'inside-bar'].includes(item.kind))).map(({ item, geometry }) => ({ item, distance: geometry.kind === 'pattern'
       ? Math.min(distanceToPAGeometry(geometry, x, y), distanceToPAGeometry({ ...geometry, x1: geometry.x1 - this.barWidth() / 2 - 4, x2: geometry.x2 + this.barWidth() / 2 + 4, top: geometry.top - 5, bottom: geometry.bottom + 5 }, x, y))
       : distanceToPAGeometry(geometry, x, y) }))
       .filter(({ distance }) => distance <= 7)
@@ -92,18 +93,22 @@ export class PriceActionOverlay implements ISeriesPrimitive {
       for (const entry of this.drawn) {
         const selected = entry.item.id === this.selectedId;
         ctx.save(); ctx.globalAlpha = (this.selectedId || this.dimmed) && !selected ? .3 : 1;
-        this.drawItem(ctx, entry, background, selected); ctx.restore();
+        const density = labelDensity(this.attachment?.chart.timeScale().options().barSpacing ?? 8, mediaSize.width);
+        if (selected || density.showLocal || !('breakoutTime' in entry.item) && !('kind' in entry.item && ['pin-bar', 'engulfing', 'inside-bar'].includes(entry.item.kind))) this.drawItem(ctx, entry, background, selected); ctx.restore();
       }
       if (!background) {
         this.labels = [];
-        const occupied: LabelBox[] = [];
+        const occupied = this.registry.begin('pa', 2);
+        const inherited = occupied.length;
+        const density = labelDensity(this.attachment?.chart.timeScale().options().barSpacing ?? 8, mediaSize.width);
         const ordered = [...this.drawn].sort((a, b) => Number(b.item.id === this.selectedId) - Number(a.item.id === this.selectedId)
           || this.endTime(b.item) - this.endTime(a.item));
         for (const entry of ordered) {
-          if (occupied.length >= 16 && entry.item.id !== this.selectedId) continue;
+          if (entry.item.id !== this.selectedId && (occupied.length - inherited >= density.auxiliary + density.main / 2 || (!density.showLocal && !('lowerPrice' in entry.item) && !('startPrice' in entry.item)))) continue;
           ctx.save(); ctx.globalAlpha = (this.selectedId || this.dimmed) && entry.item.id !== this.selectedId ? .45 : 1;
           this.drawLabel(ctx, entry, occupied); ctx.restore();
         }
+        this.registry.commit('pa', occupied, inherited);
       }
       ctx.restore();
     });
@@ -234,12 +239,7 @@ export class PriceActionOverlay implements ISeriesPrimitive {
     const width = Math.min(this.viewport.width - 8, ctx.measureText(text).width + 14);
     const left = Math.max(4, Math.min(x, this.viewport.width - width - 4));
     const top = Math.max(3, Math.min(y - 9, this.viewport.height - 23));
-    let box: LabelBox | null = null;
-    for (const shift of [0, -23, 23, -46, 46]) {
-      const next = { left, top: Math.max(3, Math.min(top + shift, this.viewport.height - 23)), width, height: 20 };
-      if (reserveLabel(next, occupied)) { box = next; break; }
-    }
-    if (!box && essential) { box = { left, top, width, height: 20 }; reserveLabel(box, occupied, true); }
+    const box = placeLabel({ left, top, width, height: 20 }, this.viewport, occupied, essential);
     if (box) {
       const closestX = Math.max(box.left, Math.min(anchor.x, box.left + box.width));
       const closestY = Math.max(box.top, Math.min(anchor.y, box.top + box.height));

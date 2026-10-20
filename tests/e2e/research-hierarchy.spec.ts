@@ -1,0 +1,68 @@
+import {test,expect} from './fixtures';
+import {createMockAnalysis} from '../../shared/mock';
+import {extractStructureEvidence} from '../../shared/structureEvidence';
+import {SAMPLE_CANDLES} from '../../shared/sample';
+test('independent hierarchy, raw coverage, exact rule navigation and zoom/pan survive display suppression',async({page})=>{
+ await page.emulateMedia({reducedMotion:'reduce'});
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+ await page.goto('/?demo=smc');
+ const layers=page.getByRole('group',{name:'视觉层级显示开关'});
+ await expect(layers.getByRole('checkbox',{name:/主结构/})).toBeChecked();
+ await expect(layers.getByRole('checkbox',{name:/辅助证据/})).toBeChecked();
+ await expect(layers.getByRole('checkbox',{name:/交易计划/})).toBeChecked();
+ const coverage=page.getByLabel('分析覆盖诊断'), original=await coverage.innerText();
+ const chart=page.locator('.chart-host');
+ await page.getByRole('button',{name:'重置图表视图'}).click();
+ const before=await chart.screenshot();
+ await layers.getByRole('checkbox',{name:/主结构/}).uncheck();
+ await layers.getByRole('checkbox',{name:/辅助证据/}).uncheck();
+ await layers.getByRole('checkbox',{name:/交易计划/}).uncheck();
+ const after=await chart.screenshot();expect(after.equals(before)).toBe(false);
+ await expect(coverage).toHaveText(original,{useInnerText:true});
+ await page.getByRole('tab',{name:/结构依据/}).click();
+ const row=page.locator('.rule-structure-row').first();await row.click();
+ await expect(layers.getByRole('checkbox',{name:/主结构/})).toBeChecked();
+ await expect(row).toHaveAttribute('aria-pressed','true');
+ const details=page.getByLabel('已选结构详情');
+ await expect(details).toContainText('规则计算');await expect(details).toContainText('确认K线（收盘后）');await expect(details).toContainText('失效条件');
+ await chart.scrollIntoViewIfNeeded();
+ await chart.hover({position:{x:300,y:120}});
+ const bounds=await chart.boundingBox();if(!bounds)throw new Error('Chart missing');
+ const pointer={x:bounds.x+300,y:bounds.y+120};
+ await page.mouse.move(pointer.x,pointer.y);
+ for(let i=0;i<40;i++){await page.mouse.wheel(0,200);await page.waitForTimeout(25);if((await page.locator('.chart-density-status').innerText()).includes('总览'))break;}
+ await expect(page.locator('.chart-density-status')).toContainText(/总览|结构/);
+ await page.mouse.down();await page.mouse.move(pointer.x-70,pointer.y,{steps:4});await page.mouse.up();
+ await expect(coverage).toHaveText(original,{useInnerText:true});
+ await row.click();await expect(details).toBeVisible();
+ await expect(page.locator('.chart-density-status')).toContainText('细节');
+ await chart.screenshot({path:'artifacts/research-chart.png'});
+ await page.screenshot({path:'artifacts/research-hierarchy.png',fullPage:true});
+ expect(errors).toEqual([]);
+});
+test('an AI result with no historical annotations retains full rule coverage and rule-cited plans remain locatable',async({page})=>{
+ const e=extractStructureEvidence(SAMPLE_CANDLES),ref=e.structures.find(x=>x.type==='HL')!;
+ const analysis=createMockAnalysis(SAMPLE_CANDLES);analysis.structures=[];analysis.priceAction={...analysis.priceAction,zones:[],legs:[],patterns:[],breakouts:[]};analysis.liquiditySweeps=[];analysis.opportunities=[];
+ analysis.tradeSetups=analysis.tradeSetups.slice(0,1).map(plan=>({...plan,opportunityId:null,structureIds:[ref.id]}));
+ await page.route('**/api/analyze',route=>route.fulfill({json:{analysis,source:'mock',model:'test-fixture',analyzedBars:SAMPLE_CANDLES.length,generatedAt:new Date().toISOString()}}));
+ await page.goto('/?demo=smc');
+ await page.getByRole('button',{name:'分析当前 K 线范围',exact:true}).click();
+ await expect(page.getByLabel('分析覆盖诊断')).toContainText('分析返回 0 项');
+ await page.getByRole('tab',{name:/潜在观察计划/}).click();
+ await expect(page.locator('.trade-plan-card')).toHaveCount(1);
+ await page.locator('.trade-plan-card .related-structures button').first().click();
+ await expect(page.getByLabel('已选结构详情')).toContainText('规则计算');
+ await expect(page.locator('.rule-structure-row[aria-pressed=true]')).toHaveCount(1);
+});
+
+test('co-located AI and rule legs keep rule catalog navigation and confirmation detail',async({page})=>{
+ const e=extractStructureEvidence(SAMPLE_CANDLES), rule=e.legs.find(leg=>leg.importance==='major')!;
+ const {source:_source,importance:_importance,timing:_timing,familyId:_family,...leg}=rule;
+ const analysis=createMockAnalysis(SAMPLE_CANDLES);analysis.priceAction.legs=[{...leg,id:'ai-leg-copy'}];analysis.opportunities=[];analysis.tradeSetups=[];analysis.tradePlanning={status:'no-setup',reason:'仅测试历史趋势腿，不生成计划'};
+ await page.route('**/api/analyze',route=>route.fulfill({json:{analysis,source:'mock',model:'test-fixture',analyzedBars:SAMPLE_CANDLES.length,generatedAt:new Date().toISOString()}}));
+ await page.goto('/?demo=smc');await page.getByRole('button',{name:'分析当前 K 线范围',exact:true}).click();
+ await page.getByRole('tab',{name:/结构依据/}).click();await page.locator('.rule-structure-catalog summary').click();
+ await page.locator('.rule-structure-catalog details .related-structures button').first().click();
+ await expect(page.getByLabel('已选结构详情')).toContainText('规则计算');await expect(page.getByLabel('已选结构详情')).toContainText('确认K线（收盘后）');
+ await expect(page.getByRole('tab',{name:/PA 价格行为/})).toHaveAttribute('aria-selected','true');
+});

@@ -9,7 +9,7 @@ import {
 const setup = (overrides: Partial<TradeSetup> = {}): TradeSetup => ({
   id: 'setup-1', opportunityId: null, direction: 'bullish', status: 'candidate', anchorTime: 20,
   entry: 100, stopLoss: 90, targets: [{ price: 120, label: '前高' }, { price: 130, label: '延伸目标' }],
-  structureIds: [], rationale: '等待回测后确认。', invalidation: '跌破保护位置。', ...overrides,
+  tracking: null, basis: null, structureIds: [], trigger: '等待回测后确认。', rationale: '等待回测后确认。', invalidation: '跌破保护位置。', ...overrides,
 });
 const sweep = (overrides: Partial<LiquiditySweep> = {}): LiquiditySweep => ({
   id: 'sweep-1', side: 'buy-side', levelTime: 10, sweepTime: 30, levelPrice: 120, extremePrice: 130,

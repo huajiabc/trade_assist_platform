@@ -1,10 +1,10 @@
 import { z } from 'zod';
 import { validateCandles, type Candle } from './market';
 
-export const LIVE_INTERVALS = ['5m', '15m', '1h', '4h', '1d'] as const;
+export const LIVE_INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d'] as const;
 export type LiveInterval = typeof LIVE_INTERVALS[number];
 export const LIVE_INTERVAL_SECONDS: Record<LiveInterval, number> = {
-  '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400,
+  '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400,
 };
 export const liveMarketQuerySchema = z.object({
   symbol: z.string().trim().toUpperCase().regex(/^[A-Z0-9]{2,20}USDT$/).default('SNDKUSDT'),

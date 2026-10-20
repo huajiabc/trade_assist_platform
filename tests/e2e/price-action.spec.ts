@@ -71,7 +71,8 @@ test('PA cards re-enable hidden candidates and mobile workbench stays inside vie
 });
 
 test('legacy 1.1 results keep PA empty instead of inventing price action evidence', async ({ page }) => {
-  const { priceAction: _pa, ...legacy } = createMockAnalysis(SAMPLE_CANDLES);
+  const { priceAction: _pa, tradePlanning: _planning, research: _research, tradeSetups, ...legacyFields } = createMockAnalysis(SAMPLE_CANDLES);
+  const legacy = { ...legacyFields, tradeSetups: tradeSetups.map(({ trigger: _trigger, tracking: _tracking, basis: _basis, ...setup }) => setup) };
   await page.route('**/api/analyze', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
     analysis: { ...legacy, schemaVersion: '1.1' }, source: 'mock', model: 'legacy-test', analyzedBars: SAMPLE_CANDLES.length, generatedAt: new Date().toISOString(),
   }) }));

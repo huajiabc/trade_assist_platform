@@ -13,6 +13,7 @@ import { liveMarketQuerySchema } from '../shared/liveMarket';
 import { BinanceMarketProvider, CachedMarketProvider, type MarketDataProvider } from './market';
 import { BinanceRealtimeProvider, createMarketStreamHandler, type RealtimeMarketProvider } from './realtime';
 import { CodexAnalysisProvider, type CodexProvider } from './codex';
+import { analyzeWithValidation } from './analysisService';
 
 const requestSchema = z.object({
   candles: z.array(z.object({
@@ -79,7 +80,7 @@ export function createApp(options: AppOptions = {}) {
   app.get('/api/market/candles', async (request, response) => {
     const parsed = liveMarketQuerySchema.safeParse(request.query);
     if (!parsed.success) {
-      throw new PublicError(400, 'MARKET_QUERY_INVALID', '行情参数无效：需为 USDT 交易对，周期支持 5m、15m、1h、4h、1d，根数为 20–500。');
+      throw new PublicError(400, 'MARKET_QUERY_INVALID', '行情参数无效：需为 USDT 交易对，周期支持 1m、5m、15m、1h、4h、1d，根数为 20–500。');
     }
     try {
       response.json(await marketProvider.getCandles(parsed.data));
@@ -133,22 +134,30 @@ export function createApp(options: AppOptions = {}) {
       throw new PublicError(503, 'AI_NOT_CONFIGURED', '所选 AI 来源未配置。Codex 需要本机 ChatGPT 登录；API 模式需要服务端 AI_API_KEY 与 AI_MODEL。');
     }
     if (selected === 'codex' && codexBusy) throw new PublicError(409, 'CODEX_BUSY', '已有 Codex 分析正在进行，请等待完成或取消后重试。');
-    let raw: unknown;
+    let analysis;
     let model = real ? config.model : 'mock-pa-smc-v1';
     let usage: AnalysisEnvelope['usage'];
+    let analysisAttempts: AnalysisEnvelope['analysisAttempts'];
     const controller = new AbortController();
     const onClose = () => { if (!response.writableEnded) controller.abort(); };
     response.once('close', onClose);
     if (selected === 'codex') codexBusy = true;
     try {
       const input = { candles: window, context: parsed.data.context, signal: controller.signal };
-      if (selected === 'codex') {
-        const result = await codex.analyzeDetailed(input, controller.signal);
-        raw = result.analysis;
+      if (real) {
+        const result = await analyzeWithValidation(input, async fixedInput => selected === 'codex'
+          ? codex.analyzeDetailed(fixedInput, fixedInput.signal)
+          : { analysis: await provider.analyze(fixedInput), model: config.model }, {
+          provider: selected === 'codex' ? 'codex' : 'api',
+          timeoutMs: selected === 'codex' ? config.codexTimeoutMs : config.timeoutMs,
+        });
+        analysis = result.analysis;
         model = result.model;
         usage = result.usage;
+        analysisAttempts = result.analysisAttempts;
       } else {
-        raw = real ? await provider.analyze(input) : createMockAnalysis(window);
+        try { analysis = validateAnalysis(createMockAnalysis(window), window); }
+        catch { throw invalidModelOutput(); }
       }
     } catch (error) {
       if (error instanceof PublicError) throw error;
@@ -157,12 +166,6 @@ export function createApp(options: AppOptions = {}) {
       response.removeListener('close', onClose);
       if (selected === 'codex') codexBusy = false;
     }
-    let analysis;
-    try {
-      analysis = validateAnalysis(raw, window);
-    } catch {
-      throw invalidModelOutput();
-    }
     const result: AnalysisEnvelope = {
       analysis,
       source: real ? 'ai' : 'mock',
@@ -170,6 +173,7 @@ export function createApp(options: AppOptions = {}) {
       provider: selected === 'codex' ? 'codex' : selected === 'api' ? 'openai-compatible' : 'mock',
       billing: selected === 'codex' ? 'chatgpt-plan' : selected === 'api' ? 'api' : 'none',
       ...(usage ? { usage } : {}),
+      ...(analysisAttempts ? { analysisAttempts } : {}),
       analyzedBars: window.length,
       generatedAt: new Date().toISOString(),
     };
@@ -196,7 +200,7 @@ export function createApp(options: AppOptions = {}) {
 
   const errorHandler: ErrorRequestHandler = (error: unknown, _request, response, _next) => {
     if (error instanceof PublicError) {
-      response.status(error.status).json({ error: { code: error.code, message: error.message } });
+      response.status(error.status).json({ error: { code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) } });
       return;
     }
     const type = typeof error === 'object' && error !== null && 'type' in error ? error.type : null;
