@@ -15,6 +15,11 @@ export const test = base.extend({
         await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: { message: '浏览器测试未模拟此模型请求，已阻止真实额度消耗。' } }) });
       } else await route.continue();
     });
+    await page.route('**/api/research/analyze', async route => {
+      if (route.request().postDataJSON()?.provider !== 'mock') {
+        await route.fulfill({status:409,json:{error:{message:'研究浏览器测试已阻止真实模型额度消耗。'}}});
+      } else await route.continue();
+    });
     await use(page);
   },
 });

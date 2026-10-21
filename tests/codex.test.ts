@@ -1,10 +1,13 @@
+import { modelContext, updateMarketState } from '../shared/marketState';
+import { localWorkbenchInterpretation } from '../shared/workbenchAnalysis';
+import { researchBundle } from './research-fixtures';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   CodexAnalysisProvider, codexSubscriptionEnvironment, resolveCodexBinary, runCodexProcess,
-  type CodexProcessRequest, type CodexProcessRunner,
+  type CodexProcessRequest, type CodexProcessRunner, type CodexConfig,
 } from '../server/codex';
 import type { ModelInput } from '../server/provider';
 import { buildRuleIndicatorReference } from '../shared/indicatorReference';
@@ -30,6 +33,7 @@ function runtime(options: {
   runAnalysis?: CodexProcessRunner;
   binary?: string | null;
   now?: () => number;
+  config?: CodexConfig;
 } = {}) {
   const run = vi.fn<CodexProcessRunner>(async (request) => {
     if (request.stopAfterResponseId === 2) return authReply(options.authType);
@@ -37,7 +41,7 @@ function runtime(options: {
     await writeFile(answerPath(request), JSON.stringify(analysis));
     return complete();
   });
-  const provider = new CodexAnalysisProvider({ timeoutMs: 1_000 }, {
+  const provider = new CodexAnalysisProvider({ timeoutMs: 1_000, ...options.config }, {
     run, resolveBinary: async () => options.binary === undefined ? '/official/codex' : options.binary, now: options.now,
   });
   return { provider, run };
@@ -111,6 +115,40 @@ describe('Codex subscription adapter', () => {
     expect(result).toEqual({ analysis, model: 'Codex CLI 默认模型', usage: { inputTokens: 1_000, cachedInputTokens: 250, outputTokens: 300 } });
     expect(run).toHaveBeenCalledTimes(2);
     await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('explicitly forwards GPT-6 Sol, high effort and Fast mode for every analysis invocation', async () => {
+    const { provider, run } = runtime({ config: { model: 'gpt-6-sol', reasoningEffort: 'high', serviceTier: 'fast' } });
+    for (let attempt=0;attempt<2;attempt++) {
+      const result=await provider.analyzeDetailed(input);
+      expect(result.model).toBe('gpt-6-sol');
+    }
+    const turns=run.mock.calls.map(([request])=>request).filter(request=>request.stopAfterResponseId===undefined);
+    expect(turns).toHaveLength(2);
+    for(const turn of turns){
+      expect(turn.args).toEqual(expect.arrayContaining(['--ignore-user-config','--model','gpt-6-sol','model_reasoning_effort="high"','service_tier="fast"','features.fast_mode=true']));
+      expect(turn.args[turn.args.indexOf('--model')+1]).toBe('gpt-6-sol');
+      expect(turn.env.OPENAI_API_KEY).toBeUndefined();
+    }
+  });
+
+  it('leaves unset model, effort and service tier at the isolated CLI defaults', async () => {
+    const { provider, run }=runtime();await provider.analyzeDetailed(input);
+    const args=run.mock.calls.find(([request])=>request.stopAfterResponseId===undefined)![0].args;
+    expect(args).not.toContain('--model');
+    expect(args.some(arg=>/^(model_reasoning_effort|service_tier|features.fast_mode)=/.test(arg))).toBe(false);
+  });
+
+  it('uses the separate research schema and stateful prompt without changing the existing runtime contract',async()=>{
+    const context=modelContext(updateMarketState(null,researchBundle())),answer=localWorkbenchInterpretation(context);
+    const {provider}=runtime({runAnalysis:async request=>{
+      const schema=JSON.parse(await readFile(request.args[request.args.indexOf('--output-schema')+1],'utf8'));
+      expect(schema.properties).toHaveProperty('strategyReviews');expect(schema.properties).not.toHaveProperty('tradeSetups');
+      expect(request.args.find(arg=>arg.startsWith('developer_instructions='))).toContain('15m负责背景');
+      const payload=JSON.parse(request.input);expect(payload.bundle).toEqual(context.bundle);expect(payload.previous.version).toBe(context.previous.version);expect(payload.context.notes).toBe('用户补充上下文');
+      await writeFile(answerPath(request),JSON.stringify(answer));return complete();
+    }});
+    expect((await provider.analyzeDetailed({candles:context.bundle.frames['1m'].candles,context:{symbol:'SNDKUSDT',timeframe:'1m',notes:'用户补充上下文'},workbench:context})).analysis).toEqual(answer);
   });
 
   it('strips API billing and endpoint overrides while retaining Codex auth location and network environment', () => {

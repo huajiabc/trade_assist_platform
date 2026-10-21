@@ -1,3 +1,4 @@
+import { createResearchRouter } from './workbench';
 import express, { type ErrorRequestHandler } from 'express';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
@@ -46,7 +47,7 @@ export interface AppOptions {
 export function createApp(options: AppOptions = {}) {
   const config = options.config ?? readServerConfig();
   const provider = options.provider ?? new OpenAICompatibleProvider(config);
-  const codex = options.codexProvider ?? new CodexAnalysisProvider({ bin: config.codexBin, model: config.codexModel, timeoutMs: config.codexTimeoutMs, proxyUrl: config.codexProxyUrl });
+  const codex = options.codexProvider ?? new CodexAnalysisProvider({ bin: config.codexBin, model: config.codexModel, reasoningEffort: config.codexReasoningEffort || undefined, serviceTier: config.codexServiceTier || undefined, timeoutMs: config.codexTimeoutMs, proxyUrl: config.codexProxyUrl });
   let codexBusy = false;
   const marketProvider = new CachedMarketProvider(options.marketProvider ?? new BinanceMarketProvider());
   const app = express();
@@ -72,6 +73,8 @@ export function createApp(options: AppOptions = {}) {
       provider: activeProvider === 'codex' ? 'codex' : activeProvider === 'api' ? 'openai-compatible' : 'mock',
       activeProvider,
       codex: codexStatus,
+      // Requested settings only; the account probe does not verify remote model/tier availability.
+      codexSettings: { model: config.codexModel || 'Codex CLI 默认模型', reasoningEffort: config.codexReasoningEffort || null, serviceTier: config.codexServiceTier || null },
       providers: { codex: codexAvailable, api: apiAvailable },
       maxAnalysisCandles: MAX_ANALYSIS_CANDLES,
     });
@@ -108,6 +111,8 @@ export function createApp(options: AppOptions = {}) {
     next();
   });
   app.use('/api', express.json({ limit: '2mb', strict: true }));
+
+  app.use('/api/research', createResearchRouter({ market: marketProvider, config, provider, codex, isCodexBusy: () => codexBusy, setCodexBusy: value => { codexBusy = value; } }));
 
   app.post('/api/analyze', async (request, response) => {
     const parsed = requestSchema.safeParse(request.body);

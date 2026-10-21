@@ -1,3 +1,4 @@
+import { inspectClosedSnapshot } from '../shared/snapshotIntegrity';
 import { extractStructureEvidence } from '../shared/structureEvidence';
 import type { Analysis } from '../shared/analysis';
 import { MAX_ANALYSIS_CANDLES, type Candle } from '../shared/market';
@@ -26,19 +27,7 @@ export function createAnalysisSnapshot(candles: Candle[], identity: string, sour
 }
 
 export function inspectAnalysisSnapshot(snapshot: AnalysisSnapshot, currentCandles: Candle[]) {
-  const current = new Map(currentCandles.map(candle => [candle.timestamp, candle]));
-  let missingBars = 0;
-  let revisedBars = 0;
-  for (const candle of snapshot.candles) {
-    const present = current.get(candle.timestamp);
-    if (!present) missingBars++;
-    else if (['open', 'high', 'low', 'close', 'volume'].some(key => candle[key as keyof Candle] !== present[key as keyof Candle])) revisedBars++;
-  }
-  const originalTimes = new Set(snapshot.candles.map(candle => candle.timestamp));
-  const start = snapshot.candles[0]?.timestamp ?? 0;
-  revisedBars += currentCandles.filter(candle => candle.timestamp >= start && candle.timestamp <= snapshot.asOf && !originalTimes.has(candle.timestamp)).length;
-  const addedBars = snapshot.selectionMode === 'manual' ? 0 : currentCandles.filter(candle => candle.timestamp > snapshot.asOf).length;
-  return { stale: addedBars > 0 || revisedBars > 0 || missingBars > 0, addedBars, revisedBars, missingBars };
+  return inspectClosedSnapshot(snapshot.candles, currentCandles, snapshot.selectionMode !== 'manual');
 }
 
 /** This is a display projection only; the validated original stays available for export.

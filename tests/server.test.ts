@@ -26,7 +26,7 @@ function candles(length = 40): Candle[] {
 }
 
 const baseConfig: ServerConfig = {
-  analysisProvider: 'api', codexBin: '', codexModel: '', codexTimeoutMs: 1000, codexProxyUrl: '',
+  analysisProvider: 'api', codexBin: '', codexModel: '', codexReasoningEffort: '', codexServiceTier: '', codexTimeoutMs: 1000, codexProxyUrl: '',
   apiKey: '',
   baseUrl: 'https://example.invalid/v1',
   model: '',
@@ -164,6 +164,15 @@ describe('Codex subscription HTTP boundary (injected process, no real usage)', (
     const result = await request(createApp({ config, codexProvider })).get('/api/health').expect(200);
     expect(result.body).toMatchObject({ configured: true, activeProvider: 'codex', provider: 'codex', providers: { codex: true, api: false } });
     expect(codexProvider.analyzeDetailed).not.toHaveBeenCalled();
+  });
+
+  it('reports requested Codex settings without exposing the private server environment or claiming a model turn', async () => {
+    const codexProvider={status,analyzeDetailed:vi.fn()};
+    const configured={...config,codexModel:'gpt-6-sol',codexReasoningEffort:'high' as const,codexServiceTier:'fast' as const};
+    const result=await request(createApp({config:configured,codexProvider})).get('/api/health').expect(200);
+    expect(result.body.codexSettings).toEqual({model:'gpt-6-sol',reasoningEffort:'high',serviceTier:'fast'});
+    expect(codexProvider.analyzeDetailed).not.toHaveBeenCalled();
+    expect(result.body).not.toHaveProperty('apiKey');
   });
 
   it('passes a bounded window to Codex and returns validated provenance and usage', async () => {
@@ -402,6 +411,15 @@ describe('server configuration', () => {
   it('has no real AI enabled by default', () => {
     expect(readServerConfig({})).toMatchObject({ apiKey: '', model: '', baseUrl: 'https://api.openai.com/v1', port: 3001, host: '127.0.0.1' });
   });
+  it('reads and preserves explicit model/effort/Fast settings, with blank defaults',()=>{
+    expect(readServerConfig({CODEX_MODEL:' gpt-6-sol ',CODEX_REASONING_EFFORT:' high ',CODEX_SERVICE_TIER:' fast '})).toMatchObject({codexModel:'gpt-6-sol',codexReasoningEffort:'high',codexServiceTier:'fast'});
+    expect(readServerConfig({})).toMatchObject({codexModel:'',codexReasoningEffort:'',codexServiceTier:''});
+  });
+  it.each([
+    {CODEX_REASONING_EFFORT:'higher'}, {CODEX_REASONING_EFFORT:'high\n--other'},
+    {CODEX_SERVICE_TIER:'turbo'}, {CODEX_SERVICE_TIER:'fast\n--other'},
+  ])('rejects invalid or injected model settings %#',env=>{expect(()=>readServerConfig(env)).toThrow(/CODEX_/);});
+
   it('rejects unsupported response format and credential-bearing upstream URLs', () => {
     expect(() => readServerConfig({ AI_RESPONSE_FORMAT: 'automatic' })).toThrow();
     expect(() => readServerConfig({ AI_BASE_URL: 'https://user:secret@example.invalid/v1' })).toThrow();

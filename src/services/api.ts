@@ -9,6 +9,7 @@ const healthSchema = z.object({
   configured: z.boolean(), model: z.string(), provider: z.enum(['codex', 'openai-compatible', 'mock']),
   maxAnalysisCandles: z.number().int().positive(),
   codex: z.object({ available: z.boolean(), authenticated: z.boolean(), message: z.string() }).optional(),
+  codexSettings: z.object({ model: z.string(), reasoningEffort: z.string().nullable(), serviceTier: z.enum(['fast']).nullable() }).optional(),
   providers: z.object({ codex: z.boolean(), api: z.boolean() }).optional(),
   activeProvider: z.enum(['codex', 'api', 'mock']).optional(),
 });

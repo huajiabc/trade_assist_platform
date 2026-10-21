@@ -28,7 +28,7 @@ const structureSchema = z.object({
   invalidation: textSchema,
 }).strict();
 
-const tradeSetupSchema = z.object({
+export const tradeSetupSchema = z.object({
   id: idSchema,
   opportunityId: idSchema.nullable(),
   direction: z.enum(['bullish', 'bearish']),

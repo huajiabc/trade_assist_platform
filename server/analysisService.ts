@@ -4,9 +4,9 @@ import type { ModelInput } from './provider';
 
 type Usage = NonNullable<AnalysisEnvelope['usage']>;
 interface ModelResult { analysis: unknown; model: string; usage?: Usage }
-interface AnalysisServiceOptions { provider: 'codex' | 'api'; timeoutMs: number }
-export interface ValidatedAnalysisResult {
-  analysis: Analysis;
+interface AnalysisServiceOptions<T> { validate?: (raw:unknown)=>T; provider: 'codex' | 'api'; timeoutMs: number }
+export interface ValidatedAnalysisResult<T=Analysis> {
+  analysis: T;
   model: string;
   analysisAttempts: 1 | 2;
   usage?: Usage;
@@ -56,11 +56,11 @@ function repairFeedback(previousAnalysis: unknown, error: unknown): NonNullable<
 /** One initial call and, only for a returned JSON validation failure, one
  * correction using the same provider and fixed snapshot. The deadline covers
  * both calls; adapters must finish abort cleanup before the route unlocks. */
-export async function analyzeWithValidation(
+export async function analyzeWithValidation<T=Analysis>(
   input: ModelInput,
   run: (input: ModelInput) => Promise<ModelResult>,
-  options: AnalysisServiceOptions,
-): Promise<ValidatedAnalysisResult> {
+  options: AnalysisServiceOptions<T>,
+): Promise<ValidatedAnalysisResult<T>> {
   const controller = new AbortController();
   const startedAt = Date.now();
   const deadline = startedAt + options.timeoutMs;
@@ -96,9 +96,9 @@ export async function analyzeWithValidation(
       stage = 'result-validation';
       ensureActive();
       usage.push(result.usage);
-      let analysis: Analysis;
+      let analysis: T;
       try {
-        analysis = validateAnalysis(result.analysis, input.candles);
+        analysis = options.validate ? options.validate(result.analysis) : validateAnalysis(result.analysis, input.candles) as T;
       } catch (error) {
         category = validationCategory(error);
         if (attempt === 2) throw invalidModelOutput();

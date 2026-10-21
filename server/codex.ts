@@ -5,10 +5,10 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
-import { analysisJsonSchema } from '../shared/analysis';
+import type { CodexReasoningEffort, CodexServiceTier } from './config';
 import { MAX_ANALYSIS_CANDLES, validateCandles } from '../shared/market';
 import { invalidModelOutput, PublicError } from './errors';
-import { buildAnalysisPayload, SYSTEM_PROMPT, type AnalysisProvider, type ModelInput } from './provider';
+import { modelPayload, modelOutputSchema, modelSystemPrompt, type AnalysisProvider, type ModelInput } from './provider';
 
 export interface CodexStatus {
   available: boolean;
@@ -32,6 +32,8 @@ export interface CodexConfig {
   /** Optional absolute native executable path; no shell command is accepted. */
   bin?: string;
   model?: string;
+  reasoningEffort?: CodexReasoningEffort;
+  serviceTier?: CodexServiceTier;
   timeoutMs?: number;
   proxyUrl?: string;
 }
@@ -353,7 +355,7 @@ export class CodexAnalysisProvider implements AnalysisProvider, CodexProvider {
       directory = await mkdtemp(path.join(tmpdir(), 'pa-smc-codex-'));
       const schemaFile = path.join(directory, 'analysis.schema.json');
       const answerFile = path.join(directory, 'analysis.json');
-      await writeFile(schemaFile, JSON.stringify(analysisJsonSchema), { encoding: 'utf8', mode: 0o600 });
+      await writeFile(schemaFile, JSON.stringify(modelOutputSchema(input)), { encoding: 'utf8', mode: 0o600 });
       const args = [
         'exec', '--ignore-user-config', '--ignore-rules', '--ephemeral', '--skip-git-repo-check',
         '--sandbox', 'read-only', '--json', '--color', 'never', '--cd', directory,
@@ -362,7 +364,7 @@ export class CodexAnalysisProvider implements AnalysisProvider, CodexProvider {
       const settings = {
         model_provider: 'openai', forced_login_method: 'chatgpt', approval_policy: 'never',
         web_search: 'disabled', project_doc_max_bytes: 0, project_doc_fallback_filenames: [],
-        developer_instructions: `${SYSTEM_PROMPT}\n仅分析用户消息中提供的数据。直接返回最终 JSON；不要调用工具、读取文件、执行命令、上网或生成图片。`,
+        developer_instructions: `${modelSystemPrompt(input)}\n仅分析用户消息中提供的数据。直接返回最终 JSON；不要调用工具、读取文件、执行命令、上网或生成图片。`,
         'history.persistence': 'none', 'mcp_servers': {}, 'plugins': {},
         'features.shell_tool': false, 'features.shell_snapshot': false, 'features.apps': false,
         'features.plugins': false, 'features.hooks': false, 'features.multi_agent': false,
@@ -375,8 +377,11 @@ export class CodexAnalysisProvider implements AnalysisProvider, CodexProvider {
       };
       for (const [key, value] of Object.entries(settings)) args.push('--config', `${key}=${JSON.stringify(value)}`);
       if (this.config.model) args.push('--model', this.config.model);
+      // Per-call overrides survive --ignore-user-config without changing global settings.
+      if (this.config.reasoningEffort) args.push('--config', 'model_reasoning_effort=' + JSON.stringify(this.config.reasoningEffort));
+      if (this.config.serviceTier) args.push('--config', 'service_tier=' + JSON.stringify(this.config.serviceTier), '--config', 'features.fast_mode=true');
       args.push('-');
-      const prompt = JSON.stringify(buildAnalysisPayload(input));
+      const prompt = JSON.stringify(modelPayload(input));
       const result = await this.run({
         command: binary, args, cwd: directory, env: this.environment(), input: prompt,
         timeoutMs: this.config.timeoutMs ?? 180_000, signal,

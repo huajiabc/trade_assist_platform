@@ -1,3 +1,4 @@
+import { WORKBENCH_PROMPT, workbenchJsonSchema, workbenchPayload, type WorkbenchModelContext } from '../shared/workbenchAnalysis';
 import { analysisJsonSchema } from '../shared/analysis';
 import type { Candle } from '../shared/market';
 import type { ServerConfig } from './config';
@@ -19,6 +20,7 @@ export interface ScreenshotInput {
 }
 
 export interface ModelInput {
+  workbench?: WorkbenchModelContext;
   candles: Candle[];
   context: AnalysisContext;
   /** One bounded correction of a prior result, against the identical snapshot. */
@@ -113,6 +115,10 @@ export function buildAnalysisPayload(input: ModelInput) {
   };
 }
 
+export const modelOutputSchema = (input:ModelInput) => input.workbench ? workbenchJsonSchema : analysisJsonSchema;
+export const modelSystemPrompt = (input:ModelInput) => input.workbench ? WORKBENCH_PROMPT : SYSTEM_PROMPT;
+export const modelPayload = (input:ModelInput) => input.workbench ? { ...workbenchPayload(input.workbench), context: input.context, ...(input.validationFeedback?{validationFeedback:input.validationFeedback}:{}) } : buildAnalysisPayload(input);
+
 async function readBoundedResponse(response: Response): Promise<unknown> {
   const declaredLength = Number(response.headers.get('content-length'));
   if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
@@ -184,7 +190,7 @@ export class OpenAICompatibleProvider implements AnalysisProvider {
     const timer = setTimeout(() => abort.abort(), this.config.timeoutMs);
     try {
       const responseFormat = this.config.responseFormat === 'json_schema'
-        ? { type: 'json_schema', json_schema: { name: 'pa_smc_analysis', strict: true, schema: analysisJsonSchema } }
+        ? { type: 'json_schema', json_schema: { name: 'pa_smc_analysis', strict: true, schema: modelOutputSchema(input) } }
         : { type: 'json_object' };
       const response = await this.fetchImpl(`${this.config.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -197,13 +203,13 @@ export class OpenAICompatibleProvider implements AnalysisProvider {
           n: 1,
           stream: false,
           messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'system', content: modelSystemPrompt(input) },
             {
               role: 'user',
               content: JSON.stringify({
-                ...buildAnalysisPayload(input),
+                ...modelPayload(input),
                 // JSON mode still needs the complete contract in its prompt.
-                schema: analysisJsonSchema,
+                schema: modelOutputSchema(input),
               }),
             },
           ],

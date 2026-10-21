@@ -44,9 +44,12 @@ function readTimestamp(raw: string, row: number): number {
 }
 
 /** Validate an API payload without coercion, sorting, deduplication, or interpolation. */
-export function validateCandles(input: unknown): Candle[] {
-  if (!Array.isArray(input) || input.length < MIN_CANDLES || input.length > MAX_CANDLES) {
-    throw new Error(`行情数据须包含 ${MIN_CANDLES}–${MAX_CANDLES} 根 K 线。`);
+export function validateCandles(input: unknown): Candle[] { return validateCandleRows(input, MIN_CANDLES, MAX_CANDLES); }
+
+/** Same OHLCV checks for partial multi-timeframe snapshots, without manufacturing bars. */
+export function validateCandleRows(input: unknown, minimum = 0, maximum = MAX_CANDLES): Candle[] {
+  if (!Array.isArray(input) || input.length < minimum || input.length > maximum) {
+    throw new Error(`行情数据须包含 ${minimum}–${maximum} 根 K 线。`);
   }
   let previousTimestamp = -1;
   return input.map((value: unknown, index): Candle => {

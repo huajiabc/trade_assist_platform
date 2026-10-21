@@ -1,9 +1,14 @@
+export type CodexReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
+export type CodexServiceTier = 'fast';
+
 export type ResponseFormat = 'json_schema' | 'json_object';
 
 export interface ServerConfig {
   analysisProvider: 'auto' | 'codex' | 'api' | 'mock';
   codexBin: string;
   codexModel: string;
+  codexReasoningEffort: CodexReasoningEffort | '';
+  codexServiceTier: CodexServiceTier | '';
   codexTimeoutMs: number;
   codexProxyUrl: string;
   apiKey: string;
@@ -28,6 +33,10 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
   const analysisProvider = env.AI_PROVIDER?.trim() || 'auto';
   if (!['auto', 'codex', 'api', 'mock'].includes(analysisProvider)) throw new Error('AI_PROVIDER 配置无效。');
   const codexModel = env.CODEX_MODEL?.trim() || '';
+  const codexReasoningEffort = env.CODEX_REASONING_EFFORT?.trim() || '';
+  if (codexReasoningEffort && !['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(codexReasoningEffort)) throw new Error('CODEX_REASONING_EFFORT 配置无效。');
+  const codexServiceTier = env.CODEX_SERVICE_TIER?.trim() || '';
+  if (codexServiceTier && codexServiceTier !== 'fast') throw new Error('CODEX_SERVICE_TIER 只能留空或设为 fast。');
   const codexBin = env.CODEX_BIN?.trim() || '';
   const codexProxyUrl = env.CODEX_PROXY_URL?.trim() || '';
   if (codexProxyUrl) {
@@ -57,6 +66,8 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     codexBin,
     codexProxyUrl,
     codexModel,
+    codexReasoningEffort: codexReasoningEffort as ServerConfig['codexReasoningEffort'],
+    codexServiceTier: codexServiceTier as ServerConfig['codexServiceTier'],
     codexTimeoutMs: integerSetting(env.CODEX_TIMEOUT_MS, 180_000, 1_000, 300_000),
     apiKey: env.AI_API_KEY?.trim() || '',
     baseUrl: url.toString().replace(/\/+$/, ''),
