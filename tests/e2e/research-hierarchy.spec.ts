@@ -49,7 +49,7 @@ test('an AI result with no historical annotations retains full rule coverage and
  await page.goto('/?demo=smc');
  await page.getByRole('button',{name:'分析当前 K 线范围',exact:true}).click();
  await expect(page.getByLabel('分析覆盖诊断')).toContainText('分析返回 0 项');
- await page.getByRole('tab',{name:/潜在观察计划/}).click();
+ await page.getByRole('tab',{name:/单周期观察/}).click();
  await expect(page.locator('.trade-plan-card')).toHaveCount(1);
  await page.locator('.trade-plan-card .related-structures button').first().click();
  await expect(page.getByLabel('已选结构详情')).toContainText('规则计算');

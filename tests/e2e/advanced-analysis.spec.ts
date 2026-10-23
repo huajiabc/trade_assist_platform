@@ -10,7 +10,7 @@ test('numeric candidates show exact prices and risk distances, focus chart, and 
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/?demo=smc');
-  await page.getByRole('tab', { name: /潜在观察计划/ }).click();
+  await page.getByRole('tab', { name: /单周期观察/ }).click();
   const setup = sample.tradeSetups[0];
   expect(setup).toBeDefined();
   const card = page.locator(`[data-setup-id="${setup.id}"]`);
@@ -38,7 +38,7 @@ test('numeric candidates show exact prices and risk distances, focus chart, and 
   await expect(page.getByRole('checkbox', { name: /开仓候选 \/ 盈亏区间/ })).toBeChecked();
   await page.getByRole('tab', { name: /结构依据/ }).click();
   await page.locator('.structure-row').first().click();
-  await page.getByRole('tab', { name: /潜在观察计划/ }).click();
+  await page.getByRole('tab', { name: /单周期观察/ }).click();
   await expect(page.locator('.trade-plan-card.is-selected')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
@@ -61,7 +61,7 @@ test('liquidity cards explain OHLC inference, focus the sweep, and re-enable the
   await expect(page.getByRole('checkbox', { name: /流动性扫除/ })).toBeChecked();
   await expect(page.locator('.chart-ohlc .readout-time')).toContainText(new Date(sweep.sweepTime * 1000).toISOString().slice(0, 16).replace('T', ' '));
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.getByRole('tab', { name: /潜在观察计划/ }).click();
+  await page.getByRole('tab', { name: /单周期观察/ }).click();
   await expect(page.locator('.trade-plan-card').first()).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
@@ -75,12 +75,12 @@ test('strict legacy analysis remains usable and shows empty new layers without i
     }),
   }));
   await page.goto('/?demo=smc');
-  await page.getByRole('button', { name: /AI 分析/ }).first().click();
+  await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect(page.getByRole('status').filter({ hasText: '分析完成' })).toBeVisible();
   await expect(page.locator('.analysis-title')).toHaveText('PA 待分析');
-  await page.getByRole('tab', { name: /潜在观察计划/ }).click();
+  await page.getByRole('tab', { name: /单周期观察/ }).click();
   await expect(page.locator('.trade-plan-card')).toHaveCount(0);
-  await expect(page.getByRole('tab', { name: /潜在观察计划/ })).toContainText(String(legacy.opportunities.length));
+  await expect(page.getByRole('tab', { name: /单周期观察/ })).toContainText(String(legacy.opportunities.length));
   await expect(page.locator('.advanced-empty')).toContainText('旧版未单列计划决策原因');
   await page.getByRole('tab', { name: /流动性扫除/ }).click();
   await expect(page.locator('.sweep-card')).toHaveCount(0);
@@ -98,9 +98,9 @@ test('a small positive reward ratio never renders as zero', async ({ page }) => 
     }),
   }));
   await page.goto('/?demo=smc');
-  await page.getByRole('button', { name: /AI 分析/ }).first().click();
+  await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect(page.getByRole('status').filter({ hasText: '分析完成' })).toBeVisible();
-  await page.getByRole('tab', { name: /潜在观察计划/ }).click();
+  await page.getByRole('tab', { name: /单周期观察/ }).click();
   await expect(page.locator('.risk-reward-ratio')).toHaveText('1 : 1.00e-4');
 });
 
@@ -117,9 +117,9 @@ test('selecting a PA structure after a second plan keeps the structure focus', a
     }),
   }));
   await page.goto('/?demo=smc');
-  await page.getByRole('button', { name: /AI 分析/ }).first().click();
+  await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect(page.getByRole('status').filter({ hasText: '分析完成' })).toBeVisible();
-  await page.getByRole('tab', { name: /潜在观察计划/ }).click();
+  await page.getByRole('tab', { name: /单周期观察/ }).click();
   await page.getByRole('button', { name: '定位开仓候选 2', exact: true }).click();
   await page.getByRole('tab', { name: /结构依据/ }).click();
   await page.locator('.structure-row').first().click();

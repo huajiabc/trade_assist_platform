@@ -59,7 +59,7 @@ test('a new closed bar cannot cancel a pending analysis or erase its frozen-snap
     finally { handled.release(); }
   });
   await setupMarket(page, () => snapshot);
-  await page.getByRole('button', { name: /AI 分析/ }).first().click();
+  await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect.poll(() => requests.length).toBe(1);
   const analyzedLast = requests[0].candles.at(-1)!;
   expect(requests[0].candles).toHaveLength(39);
@@ -70,8 +70,8 @@ test('a new closed bar cannot cancel a pending analysis or erase its frozen-snap
   await expect(page.getByLabel('分析来源', { exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: '自动范围', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: '手动范围', exact: true })).toBeDisabled();
-  await expect(page.getByLabel('图表分析状态')).toContainText('正在分析');
-  await expect(page.getByLabel('图表分析状态')).toContainText('39 根');
+  await expect(page.getByLabel('分析任务状态')).toContainText('正在分析');
+  await expect(page.getByLabel('分析任务状态')).toContainText('39 根');
   response.release();
   await handled.promise;
   await expect(page.locator('.analysis-provenance')).toContainText('session-test-model');
@@ -106,7 +106,7 @@ test('1m analysis sends an unambiguous minute interval and survives rolling cand
   await setupMarket(page, () => snapshot, '1m');
   await expect(page.locator('.instrument-name .interval')).toHaveText('1M');
   const expectedInput = structuredClone(snapshot.candles.slice(0, -1));
-  await page.getByRole('button', { name: /AI 分析/ }).first().click();
+  await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect.poll(() => requests.length).toBe(1);
   expect(requests[0].context).toMatchObject({ symbol: 'SNDKUSDT', timeframe: '1m' });
   expect(requests[0].context.notes).toContain('每根 K 线 60 秒');
@@ -122,9 +122,9 @@ test('1m analysis sends an unambiguous minute interval and survives rolling cand
   snapshot.candles.at(-1)!.volume += 50;
   await page.locator('.market-refresh').click();
   await expect(page.locator('.market-refresh')).toBeEnabled();
-  await expect(page.getByLabel('图表分析状态')).toContainText('正在分析');
-  await expect(page.getByLabel('图表分析状态')).toContainText('299 根');
-  await expect(page.getByLabel('图表分析状态')).toContainText('最多调用模型 2 次');
+  await expect(page.getByLabel('分析任务状态')).toContainText('正在分析');
+  await expect(page.getByLabel('分析任务状态')).toContainText('299 根');
+  await expect(page.getByLabel('分析任务状态')).toContainText('最多调用模型 2 次');
   await expect(page.getByLabel('分析来源', { exact: true })).toBeDisabled();
   expect(snapshot.candles[0].timestamp).toBeGreaterThan(expectedInput[0].timestamp);
 
@@ -152,20 +152,20 @@ test('model errors remain visible through ordinary ticks and closed-history corr
     return route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: { message: '测试模型连接失败，请检查代理后重试。' } }) });
   });
   await setupMarket(page, () => snapshot);
-  await page.getByRole('button', { name: /AI 分析/ }).first().click();
-  await expect(page.getByLabel('图表分析状态')).toContainText('测试模型连接失败');
+  await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
+  await expect(page.getByLabel('分析任务状态')).toContainText('测试模型连接失败');
   snapshot = structuredClone(snapshot);
   snapshot.candles.at(-1)!.volume += 10;
   snapshot.serverTime += 1000;
   await page.locator('.market-refresh').click();
   await expect(page.locator('.market-refresh')).toBeEnabled();
-  await expect(page.getByLabel('图表分析状态')).toContainText('测试模型连接失败');
+  await expect(page.getByLabel('分析任务状态')).toContainText('测试模型连接失败');
   snapshot.candles.at(-2)!.volume += 10;
   snapshot.serverTime += 1000;
   await page.locator('.market-refresh').click();
   await expect(page.locator('.market-refresh')).toBeEnabled();
   await expect(page.getByLabel('分析任务状态')).toContainText('测试模型连接失败');
-  await expect(page.getByLabel('图表分析状态')).toContainText('测试模型连接失败');
+  await expect(page.getByLabel('分析任务状态')).toContainText('测试模型连接失败');
   expect(requests).toBe(1);
 });
 
@@ -188,7 +188,7 @@ test('explicit interval switching aborts immediately and a late old response can
     snapshot = fixture('15m');
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot) });
   });
-  await page.getByRole('button', { name: /AI 分析/ }).first().click();
+  await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect.poll(() => count).toBe(1);
   const aborted = page.waitForEvent('requestfailed', request => request.url().endsWith('/api/analyze'));
   await page.getByRole('button', { name: '切换到 15m 周期', exact: true }).click();
@@ -197,8 +197,8 @@ test('explicit interval switching aborts immediately and a late old response can
   await expect(page.getByLabel('分析来源', { exact: true })).toBeEnabled();
   replacementMarket.release();
   await expect(page.getByLabel('K 线周期', { exact: true })).toHaveValue('15m');
-  await expect(page.getByRole('button', { name: /AI 分析/ }).first()).toBeEnabled();
-  await page.getByRole('button', { name: /AI 分析/ }).first().click();
+  await expect(page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first()).toBeEnabled();
+  await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect(page.locator('.analysis-provenance')).toContainText('replacement-market-result');
   oldResponse.release();
   await oldHandled.promise;
@@ -219,14 +219,14 @@ test('analysis feedback and cancellation stay visible in a mobile focused chart'
     finally { handled.release(); }
   });
   await setupMarket(page, () => fixture());
-  await page.getByRole('button', { name: /AI 分析/ }).first().click();
+  await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect.poll(() => requests).toBe(1);
+  await page.getByRole('button', { name: '专注图表', exact: true }).click();
   const chartStatus = page.getByLabel('图表分析状态');
   await chartStatus.scrollIntoViewIfNeeded();
   await expect(chartStatus).toContainText('正在分析');
   await expect(chartStatus).toContainText(/已等待 \d+ 秒/);
   await expect(chartStatus.getByRole('button', { name: '取消分析', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '专注图表', exact: true }).click();
   await expect(chartStatus).toBeVisible();
   const bounds = await chartStatus.boundingBox();
   expect(bounds).not.toBeNull();

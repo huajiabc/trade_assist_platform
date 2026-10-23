@@ -1,7 +1,8 @@
 import { STRATEGY_NAMES, type StrategyId } from './strategyTypes';
 import { buildStrategyTrigger, type StrategyTriggerSpec } from './strategyTriggers';
 import { auditPlanScale, planScaleContext, resolvePlanPolicy, MICRO_PLAN_POLICY, type PlanPolicy } from './planPolicy';
-export const STRATEGY_CATALOG_VERSION='catalog-2.1';
+export const STRATEGY_CATALOG_VERSION='catalog-3.0';
+import { buildPlanHorizon, protectionBoundary, type PlanHorizon } from './planHorizon';
 import { tradeSetupSchema, type TradeSetup } from './analysis';
 import { auditStopRisk, tradeRiskContext, STOP_RISK_POLICY } from './tradeRisk';
 import { calculateRiskReward } from './tradeGeometry';
@@ -10,12 +11,12 @@ import { contentId, RESEARCH_FRAMES, frameRegime, type ResearchBundle, type Rese
 
 export const STRATEGY_PARAMETERS = Object.freeze({ maximumExtensionAtr:2, maximumWait1mBars:30, maximumLocalConfirmationAgeBars:10, maximumZoneTouchEpisodes:2, maximumPrimaryCandidates:6, maximumTriggerCandidates:3 });
 export const STRATEGY_CATALOG = [
-  {id:'sweep-reclaim',name:STRATEGY_NAMES['sweep-reclaim'],environment:'背景不反对；转换或区间须说明不确定性',prerequisites:'5m越过已确认极值并同根收复，随后5m反向CHoCH，再由1m结构确认',trigger:'新的1m局部回踩须收盘守住实际扫除收复位，后续收盘越过反向确认K线极值',invalidation:'保护结构失效、缺口或等待超时',targetRule:'前方最近有效5m/15m极值；通过当前幅度与R门槛，空间不足等待'},
-  {id:'bos-retest',name:STRATEGY_NAMES['bos-retest'],environment:'15m趋势匹配，或在区间背景中保留条件假设',prerequisites:'5m收盘BOS、之后实际回踩且收盘守住突破位，随后1m同向结构',trigger:'新的1m回踩突破位附近，后续收盘守住突破位及局部结构，再以更晚收盘越过确认极值',invalidation:'反向收盘失守保护结构、过度延伸或超时',targetRule:'有效结构极值，不能跳过近端阻挡只取远端目标'},
-  {id:'trend-pullback',name:STRATEGY_NAMES['trend-pullback'],environment:'15m明确同向趋势及主要保护结构',prerequisites:'5m有效区域、形成后回踩与方向收盘反应，随后1m结构确认；反复测试需复核',trigger:'新的1m局部回踩，后续收盘保持已反应FVG/OB方向侧，再收盘越过局部极值',invalidation:'区域回补、5m保护失效、15m背景冲突或超时',targetRule:'最近有依据的5m/15m结构；15m远端目标只是条件目标'},
-  {id:'range-reversal',name:STRATEGY_NAMES['range-reversal'],environment:'15m已确认区间，价格位于边缘，避免在区间中部逆势',prerequisites:'区间先于5m扫除/失败突破形成；收盘收复边界且后续反向结构确认',trigger:'1m回踩须收在区间内部，后续越过局部极值时仍位于区间外侧四分之一',invalidation:'15m有效离开区间、5m保护失守或超时',targetRule:'最近未清除的实际结构，区间另一边不是保证到达目标'},
-  {id:'failed-breakout',name:STRATEGY_NAMES['failed-breakout'],environment:'原BOS后未能延续，15m转换/区间或不反对反转方向',prerequisites:'5m收盘突破后6根内收回原价位，随后反向CHoCH；不把普通回撤当失败',trigger:'1m反向回踩收盘守住失败收回侧，后续收盘越过反向确认极值；保护含真实失败K线外侧',invalidation:'价格重新收盘越过失败突破外侧、保护失守或超时',targetRule:'有依据的最近5m/15m结构，保留近端阻挡'},
-  {id:'displacement-continuation',name:STRATEGY_NAMES['displacement-continuation'],environment:'15m趋势同向，避免强位移末端追价',prerequisites:'5m强实体/ATR与量能扩张、同根收盘BOS、首次25%–75%实体回撤反应',trigger:'首次5m回撤反应后，1m局部回踩、后续守住位移反应区，再以更晚收盘确认延续',invalidation:'位移起点失守、反复回测、过度延伸或超时',targetRule:'最近结构目标；量能与BOS同属位移证据，不重复计分'},
+  {id:'sweep-reclaim',name:STRATEGY_NAMES['sweep-reclaim'],environment:'背景不反对；转换或区间须说明不确定性',prerequisites:'5m越过已确认极值并同根收复，随后5m反向CHoCH，再由1m结构确认',trigger:'新的1m局部回踩须收盘守住实际扫除收复位，后续收盘越过反向确认K线极值',invalidation:'保护结构失效、缺口或等待超时',targetRule:'前方15m主要目标与5m途中阻挡；通过当前幅度与R门槛，空间不足等待'},
+  {id:'bos-retest',name:STRATEGY_NAMES['bos-retest'],environment:'15m趋势匹配，或在区间背景中保留条件假设',prerequisites:'5m收盘BOS、之后实际回踩且收盘守住突破位，随后1m同向结构',trigger:'新的1m回踩突破位附近，后续收盘守住突破位及局部结构，再以更晚收盘越过确认极值',invalidation:'反向收盘失守保护结构、过度延伸或超时',targetRule:'15m主要结构作为TP，5m阻挡单列；1R内主要阻挡未处理时等待'},
+  {id:'trend-pullback',name:STRATEGY_NAMES['trend-pullback'],environment:'15m明确同向趋势及主要保护结构',prerequisites:'5m有效区域、形成后回踩与方向收盘反应，随后1m结构确认；反复测试需复核',trigger:'新的1m局部回踩，后续收盘保持已反应FVG/OB方向侧，再收盘越过局部极值',invalidation:'区域回补、5m保护失效、15m背景冲突或超时',targetRule:'最近已确认15m主要结构；途中5m区域需逐段观察反应'},
+  {id:'range-reversal',name:STRATEGY_NAMES['range-reversal'],environment:'15m已确认区间，价格位于边缘，避免在区间中部逆势',prerequisites:'区间先于5m扫除/失败突破形成；收盘收复边界且后续反向结构确认',trigger:'1m回踩须收在区间内部，后续越过局部极值时仍位于区间外侧四分之一',invalidation:'15m有效离开区间、5m保护失守或超时',targetRule:'已确认15m区间另一侧主要结构作条件目标，途中阻挡单列，不保证到达'},
+  {id:'failed-breakout',name:STRATEGY_NAMES['failed-breakout'],environment:'原BOS后未能延续，15m转换/区间或不反对反转方向',prerequisites:'5m收盘突破后6根内收回原价位，随后反向CHoCH；不把普通回撤当失败',trigger:'1m反向回踩收盘守住失败收回侧，后续收盘越过反向确认极值；保护含真实失败K线外侧',invalidation:'价格重新收盘越过失败突破外侧、保护失守或超时',targetRule:'15m主要结构作目标，保留5m途中阻挡与其失效条件'},
+  {id:'displacement-continuation',name:STRATEGY_NAMES['displacement-continuation'],environment:'15m趋势同向，避免强位移末端追价',prerequisites:'5m强实体/ATR与量能扩张、同根收盘BOS、首次25%–75%实体回撤反应',trigger:'首次5m回撤反应后，1m局部回踩、后续守住位移反应区，再以更晚收盘确认延续',invalidation:'位移起点失守、反复回测、过度延伸或超时',targetRule:'15m主要目标与5m检查点；量能与BOS同属位移证据，不重复计分'},
 ] as const;
 export type { StrategyId } from './strategyTypes';
 export interface StrategyCheck {key:string;label:string;passed:boolean;weight:number;awarded:number;reason:string;evidenceIds:string[]}
@@ -27,7 +28,7 @@ export interface CandidateSelection {
  considered:number; eligible:number; selectedPrimaryId:string|null; reason:string; alternatives:CandidateAlternative[];
 }
 export interface StrategyCandidate {
- primaryFactId?:string; triggerSpec?:StrategyTriggerSpec; selection?:CandidateSelection;
+ horizon?:PlanHorizon; primaryFactId?:string; triggerSpec?:StrategyTriggerSpec; selection?:CandidateSelection;
  planPolicy?:PlanPolicy;id:string;strategyId:StrategyId;direction:'bullish'|'bearish';scenarioId:string;stage:'watching'|'conditional';score:number;
  snapshotId:string;asOf:number;checks:StrategyCheck[];supportIds:string[];oppositionIds:string[];eventGroups:string[];
  conflicts:string[];uncertainties:string[];sourceByFrame:Record<ResearchFrame,string[]>;setup:TradeSetup|null;
@@ -58,6 +59,12 @@ export function validateStrategyPlan(setup:TradeSetup,candidate:StrategyCandidat
  if(calculateRiskReward(setup).ratio<1)throw new Error('真实首目标空间不足1R，不能压紧止损凑单。');
  if(basis.targetStructureIds.length!==setup.targets.length)throw new Error('目标依据数量不匹配。');
  setup.targets.forEach((target,i)=>{const f=entries.get(basis.targetStructureIds[i])!;if(!['5m','15m'].includes(f.timeframe)||!['HH','LH','HL','LL','liquidity-high','liquidity-low'].includes(f.type)||target.price<f.low&&!same(target.price,f.low)||target.price>f.high&&!same(target.price,f.high))throw new Error('目标须引用真实5m/15m结构价位。');});
+ if(candidate.horizon){
+  const expected=buildPlanHorizon(bundle,facts,setup.direction,setup.entry,setup.stopLoss,candidate.planPolicy??MICRO_PLAN_POLICY);
+  if(JSON.stringify(expected)!==JSON.stringify(candidate.horizon)||expected.status!=='open'||JSON.stringify(expected.objectives.map(t=>t.structureId))!==JSON.stringify(basis.targetStructureIds))throw new Error('目标周期、途中阻挡或15m目标路径与快照不一致。');
+  const primary=candidate.primaryFactId?entries.get(candidate.primaryFactId):undefined;
+  if(primary){const boundary=protectionBoundary(bundle,primary,setup.direction);if(setup.direction==='bullish'?stop.low>boundary:stop.high<boundary)throw new Error('5m止损结构未保护策略事件的真实外侧。');}
+ }
  const prices=[...bundle.frames['1m'].candles.flatMap(b=>[b.high,b.low]),...(candidate.triggerSpec?setup.structureIds.flatMap(id=>{const f=entries.get(id)!;return [f.low,f.high];}):[])],span=Math.max(...prices)-Math.min(...prices),padRange=Math.max(span,setup.entry*.005)*3;
  validateTradeTracking(setup,Math.max(Number.MIN_VALUE,Math.min(...prices)-padRange),Math.max(...prices)+padRange);
  if(!setup.tracking||setup.tracking.steps.length<2)throw new Error('策略触发必须有分开的回踩与后续收盘步骤。');
@@ -90,7 +97,7 @@ export function evaluateStrategies(bundle:ResearchBundle,facts:ResearchFact[],re
   const localPool=trigger.filter(f=>['BOS','CHoCH'].includes(f.type)&&f.direction===direction&&f.status==='confirmed'&&bundle.asOf-f.knownAt<=STRATEGY_PARAMETERS.maximumLocalConfirmationAgeBars*60)
     .sort((a,b)=>b.knownAt-a.knownAt||a.id.localeCompare(b.id)).filter((f,i,a)=>a.findIndex(x=>x.id===f.id)===i).slice(0,STRATEGY_PARAMETERS.maximumTriggerCandidates);
   const evaluatePrimary=(primary:ResearchFact|undefined,preferredLocal?:ResearchFact):StrategyCandidate=>{
-  const seed=contentId([primary?.id??'none',policy]);
+  const seed=contentId([STRATEGY_CATALOG_VERSION,primary?.id??'none',policy]);
   const range=latest(bg.filter(f=>f.type==='trading-range'&&f.status==='confirmed'&&f.confirmedAt!==null&&f.knownAt<(primary?.formedAt??0)));
   const candidateBackground=strategy.id==='range-reversal'?range:background;
   const candidate:StrategyCandidate={primaryFactId:primary?.id,planPolicy:policy,id:strategy.id+'-'+direction+'-'+seed,strategyId:strategy.id,direction,scenarioId:'scenario-'+strategy.id+'-'+direction+'-'+seed,
@@ -150,7 +157,8 @@ export function evaluateStrategies(bundle:ResearchBundle,facts:ResearchFact[],re
   const entry=local?.low;
   if(strategy.id==='range-reversal'){const located=!!range&&entry!==undefined&&(direction==='bullish'?entry<=range.low+(range.high-range.low)*.25:entry>=range.high-(range.high-range.low)*.25);check('range-location','入场仍在区间外侧四分之一',located,0,located?'参考触发仍在区间边缘':'当前触发已到区间中部，不做机械摸顶摸底',range?[range]:[]);}
   const protective=structure.filter(f=>protectiveTypes.includes(f.type)&&f.status==='confirmed'&&usable(f)&&f.knownAt<=bundle.asOf&&(policy.profile!=='structural'||f.importance==='major')&&entry!==undefined&&(direction==='bullish'?f.low<entry:f.high>entry)&&!bundle.frames['5m'].candles.some(b=>b.timestamp>=f.knownAt&&(direction==='bullish'?b.close<f.low:b.close>f.high))).sort((a,b)=>b.knownAt-a.knownAt);
-  const stop=protective.find(f=>{const atr=tradeRiskContext(bundle.frames['5m'].candles).atr;if(atr===null||entry===undefined)return false;const loss=direction==='bullish'?f.low-atr*.25:f.high+atr*.25;const scale=planScaleContext(bundle.frames['5m'].candles,policy,entry);return Math.abs(entry-loss)>=scale.minimumRiskDistance;});
+  const eventBoundary=primary?protectionBoundary(bundle,primary,direction):entry;
+  const stop=protective.filter(f=>eventBoundary!==undefined&&(direction==='bullish'?f.low<=eventBoundary:f.high>=eventBoundary)).sort((a,b)=>Math.abs(a.low-(entry??0))-Math.abs(b.low-(entry??0))||b.knownAt-a.knownAt).find(f=>{const atr=tradeRiskContext(bundle.frames['5m'].candles).atr;if(atr===null||entry===undefined)return false;const loss=direction==='bullish'?f.low-atr*.25:f.high+atr*.25;const scale=planScaleContext(bundle.frames['5m'].candles,policy,entry);return Math.abs(entry-loss)>=scale.minimumRiskDistance;});
   const majorProtection=latest(bg.filter(f=>protectiveTypes.includes(f.type)&&f.status==='confirmed'&&f.importance==='major'));
   if(majorProtection)candidate.sourceByFrame['15m'].push(majorProtection.id);
   check('protection','5m结构保护'+(strategy.id==='trend-pullback'?'与15m主要保护':''),!!stop&&(strategy.id!=='trend-pullback'||!!majorProtection),1,stop?'保护价格来自实际5m摆点':'缺少有效5m保护结构',stop?[stop]:[]);
@@ -160,9 +168,10 @@ export function evaluateStrategies(bundle:ResearchBundle,facts:ResearchFact[],re
   const extended=entry!==undefined&&last!==undefined&&volatility!==null&&Math.abs(last-entry)>volatility*STRATEGY_PARAMETERS.maximumExtensionAtr;
   check('extension','入场尚未过度延伸',entry!==undefined&&!extended,1,extended?'当前价格离1m参考位超过2倍5m ATR，等待新结构':'2倍5m ATR为未经回测的项目延伸过滤参数');
   if(extended)candidate.conflicts.push('当前价格已远离参考触发区');
-  const targetFacts=entry===undefined?[]:facts.filter(f=>f.knownAt<=bundle.asOf&&['5m','15m'].includes(f.timeframe)&&usable(f)&&['HH','LH','HL','LL','liquidity-high','liquidity-low'].includes(f.type)&&(direction==='bullish'?['HH','LH','liquidity-high'].includes(f.type)&&f.low>entry:['HL','LL','liquidity-low'].includes(f.type)&&f.high<entry))
-    .sort((a,b)=>Math.abs(a.low-entry)-Math.abs(b.low-entry)||Number(b.importance==='major')-Number(a.importance==='major')||b.knownAt-a.knownAt||a.id.localeCompare(b.id));
-  const targets=targetFacts.filter((f,i,a)=>a.findIndex(x=>same(x.low,f.low))===i).slice(0,3);
+  const stopPrice=stop&&volatility!==null?(direction==='bullish'?stop.low-volatility*STOP_RISK_POLICY.minimumStructureBufferAtr:stop.high+volatility*STOP_RISK_POLICY.minimumStructureBufferAtr):null;
+  if(entry!==undefined&&stopPrice!==null)candidate.horizon=buildPlanHorizon(bundle,facts,direction,entry,stopPrice,policy);
+  const targets=(candidate.horizon?.objectives??[]).map(level=>facts.find(f=>f.id===level.structureId)!).filter(Boolean);
+  if(candidate.horizon?.status!=='open'&&candidate.horizon)candidate.proposalReason=candidate.horizon.reason;
   if(local&&stop&&volatility!==null&&volatility>0&&targets.length){
    const stopLoss=direction==='bullish'?stop.low-volatility*STOP_RISK_POLICY.minimumStructureBufferAtr:stop.high+volatility*.25;
    const triggerResult=primary?buildStrategyTrigger({strategyId:strategy.id,direction,primary,local,range,reaction,bundle,facts,stop,
@@ -174,11 +183,11 @@ export function evaluateStrategies(bundle:ResearchBundle,facts:ResearchFact[],re
    const ids=[...new Set([...candidate.sourceByFrame['15m'],...candidate.sourceByFrame['5m'],...candidate.sourceByFrame['1m'],...targets.map(f=>f.id)])];
    // Existing Schema 1.5 geometry/tracking contract; the builder supplies strategy-specific future conditions.
    const setup:TradeSetup={strategyId:strategy.id,id:candidate.id+'-plan',opportunityId:null,direction,status:'candidate',anchorTime:bundle.frames['1m'].lastClosedTime!,entry:entry!,stopLoss,
-    targets:targets.map(f=>({price:f.low,label:f.timeframe+' '+f.type+'结构目标'})),structureIds:ids.slice(0,12),basis:{scenarioId:candidate.scenarioId,entryStructureId:local.id,stopStructureId:stop.id,targetStructureIds:targets.map(f=>f.id)},
+    targets:targets.map(f=>({price:direction==='bullish'?f.low:f.high,label:f.timeframe+' '+f.type+(f.importance==='major'?'主要结构目标':'结构目标')})),structureIds:ids.slice(0,12),basis:{scenarioId:candidate.scenarioId,entryStructureId:local.id,stopStructureId:stop.id,targetStructureIds:targets.map(f=>f.id)},
     trigger:triggerResult.spec?.summary??triggerResult.reason,
     tracking:triggerResult.spec?.tracking??null,
-    rationale:strategy.name+'；'+(policy.profile==='structural'?'结构波段幅度偏好':'局部短线幅度偏好')+'；15m背景、5m保护与反应、1m触发分别承担不同职责。目标来自最近真实价位，未跳过近端阻挡。',invalidation:'等待期间5m保护失守、15m背景冲突、数据修订/缺口或30根1m等待结束则取消或复核。'};
-   try{if(!triggerResult.spec)throw new Error(triggerResult.reason);validateStrategyPlan(setup,candidate,bundle,facts);candidate.setup=setup;candidate.proposalReason='策略专属触发、价位及ATR缓冲校验通过，仍为待触发研究候选';}
+    rationale:strategy.name+'；'+(policy.profile==='structural'?'结构波段幅度偏好':'局部短线幅度偏好')+'；15m背景、5m保护与反应、1m触发分别承担不同职责。'+(policy.profile==='structural'?'TP采用15m主要目标；5m途中阻挡独立保留，不与最终目标混同。':'局部短线以最近实际结构为目标，不冒充15m波段。')+'目标可达性需逐段验证。',invalidation:'等待期间5m保护失守、15m背景冲突、数据修订/缺口或30根1m等待结束则取消或复核。'};
+   try{if(candidate.horizon?.status!=='open')throw new Error(candidate.horizon?.reason??'目标路径不完整');if(!triggerResult.spec)throw new Error(triggerResult.reason);validateStrategyPlan(setup,candidate,bundle,facts);candidate.setup=setup;candidate.proposalReason='策略专属触发、价位及ATR缓冲校验通过，仍为待触发研究候选';}
    catch(error){candidate.proposalReason=error instanceof Error?error.message:'计划校验失败';}
   }
   check('geometry','保护与真实首目标空间',candidate.setup!==null,1,candidate.proposalReason,targets);
@@ -196,7 +205,7 @@ export function evaluateStrategies(bundle:ResearchBundle,facts:ResearchFact[],re
   const attempted=(primaries.length?primaries:[undefined]).flatMap(primary=>
     primary&&localPool.length?localPool.map(local=>evaluatePrimary(primary,local)):[evaluatePrimary(primary)]);
   const reviewed=attempted.filter((c,i,a)=>a.findIndex(other=>other.id===c.id)===i);
-  // A bounded search of real alternatives. Never skip a nearer target or change a price to improve ranking.
+  // Compare real objectives at the requested horizon; nearer obstacles are retained in the route.
   const span=(c:StrategyCandidate)=>c.setup?Math.abs(c.setup.targets[0].price-c.setup.entry)/c.setup.entry:0;
   const distance=(c:StrategyCandidate)=>c.setup?Math.abs((bundle.frames['1m'].candles.at(-1)?.close??c.setup.entry)-c.setup.entry):Infinity;
   reviewed.sort((a,b)=>Number(b.stage==='conditional')-Number(a.stage==='conditional')||b.score-a.score||span(b)-span(a)||distance(a)-distance(b)||(b.triggerObservedAt??0)-(a.triggerObservedAt??0)||a.id.localeCompare(b.id));

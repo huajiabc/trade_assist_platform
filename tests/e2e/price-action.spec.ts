@@ -77,7 +77,7 @@ test('legacy 1.1 results keep PA empty instead of inventing price action evidenc
     analysis: { ...legacy, schemaVersion: '1.1' }, source: 'mock', model: 'legacy-test', analyzedBars: SAMPLE_CANDLES.length, generatedAt: new Date().toISOString(),
   }) }));
   await page.goto('/?demo=smc');
-  await page.getByRole('button', { name: /AI 分析/ }).first().click();
+  await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect(page.getByRole('status').filter({ hasText: '分析完成' })).toBeVisible();
   await expect(page.locator('.pa-evidence-card')).toHaveCount(0);
   await expect(page.locator('.analysis-title')).toHaveText('PA 待分析');
@@ -95,10 +95,10 @@ test('observation plans can focus PA evidence and reveal its family', async ({ p
     analysis: result, source: 'mock', model: 'pa-ref-test', analyzedBars: SAMPLE_CANDLES.length, generatedAt: new Date().toISOString(),
   }) }));
   await page.goto('/?demo=smc');
-  await page.getByRole('button', { name: /AI 分析/ }).first().click();
+  await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect(page.getByRole('status').filter({ hasText: '分析完成' })).toBeVisible();
   await page.getByRole('button', { name: 'SMC 主视图', exact: true }).click();
-  await page.getByRole('tab', { name: /潜在观察计划/ }).click();
+  await page.getByRole('tab', { name: /单周期观察/ }).click();
   await page.locator('.trade-plan-card .related-structures').getByRole('button', { name: `PA · ${pa.item.title}` }).click();
   await expect(page.getByRole('tab', { name: /PA 价格行为/ })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator(`[data-pa-id="${pa.item.id}"]`)).toHaveClass(/is-selected/);

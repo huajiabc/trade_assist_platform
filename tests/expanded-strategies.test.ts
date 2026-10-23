@@ -32,9 +32,9 @@ describe('A–F strategy types and wider structural preferences',()=>{
   expect(find('displacement-continuation',[...strategyFacts(),{...f,tests:2}]).setup).toBeNull();expect(find('displacement-continuation',[...strategyFacts(),{...f,reactionTime:null}]).setup).toBeNull();
   const facts=strategyFacts();facts[0].direction='bearish';expect(find('displacement-continuation',[...facts,f]).setup).toBeNull();
  });
- it('prefers a major protection over a newer small pivot and records the strategy',()=>{
+ it('protects the 5m event in both profiles instead of choosing a newer pivot inside it',()=>{
   const local=added('HL',{id:'small-local-protect',importance:'local',low:97.5,high:97.5,knownAt:AS_OF-30});const c=find('bos-retest',[...strategyFacts(),local]);expect(c.setup?.basis?.stopStructureId).toBe('five-protect');expect(c.setup?.strategyId).toBe('bos-retest');
-  const short=evaluateStrategies(researchBundle(),[...strategyFacts(),local],MICRO_PLAN_POLICY).find(c=>c.strategyId==='bos-retest'&&c.direction==='bullish')!;expect(short.setup?.basis?.stopStructureId).toBe(local.id);
+  const short=evaluateStrategies(researchBundle(),[...strategyFacts(),local],MICRO_PLAN_POLICY).find(c=>c.strategyId==='bos-retest'&&c.direction==='bullish')!;expect(short.setup?.basis?.stopStructureId).toBe('five-protect');
  });
  it('rejects a narrow nearer obstacle instead of skipping it to keep a distant target',()=>{const c=find('bos-retest',[...strategyFacts(),added('HH',{id:'nearby',low:101,high:101})]);expect(c.setup).toBeNull();expect(c.proposalReason).toMatch(/目标幅度|1R/);});
  it('filters three-point SNDK-like geometry and accepts a wider geometry without moving either',()=>{

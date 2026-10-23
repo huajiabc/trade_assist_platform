@@ -75,7 +75,7 @@ test('a watch-only model decision explains the absent numeric overlay without in
   await expect(status).toContainText('文字条件不等于含 E / SL / TP 的数值计划');
   await expect(status.getByRole('button', { name: '定位当前计划', exact: true })).toHaveCount(0);
   await status.getByRole('button', { name: '查看计划与观察依据', exact: true }).click();
-  await expect(page.getByRole('tab', { name: /潜在观察计划/ })).toContainText('开仓计划0文字观察 1');
+  await expect(page.getByRole('tab', { name: /单周期观察/ })).toContainText('开仓计划0文字观察 1');
   await expect(page.locator('.trade-plans .advanced-empty')).toContainText(reason);
   await expect(page.locator('.trade-plan-card')).toHaveCount(0);
   expect(fixture.requests()).toBe(1);

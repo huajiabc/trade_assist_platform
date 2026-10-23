@@ -175,19 +175,19 @@ export class TradeOverlay implements ISeriesPrimitive {
     // Keep trade prices left of the anchor: native key-level titles occupy
     // the right edge of the pane and would otherwise cover E / SL / TP labels.
     const tradePriceTag = (text: string, y: number, color: string) => {
-      ctx.font = '500 10px Arial, "Segoe UI", sans-serif';
+      ctx.font = '500 12px Arial, "Segoe UI", sans-serif';
       this.tag(ctx, text, x1 - ctx.measureText(text).width - 16, y, color,
         `setup:${setup.id}`, occupied, true, { x: x1, y });
     };
     tradePriceTag(`入场候选 ${formatPrice(setup.entry)}`, entryY, '#d1d4dc');
     tradePriceTag(`SL ${formatPrice(setup.stopLoss)}`, stopY, '#ff6b77');
-    targets.forEach((target, index) => tradePriceTag(`TP${index + 1} ${formatPrice(target.price)}`, target.y, '#2bc5a8'));
+    targets.forEach((target, index) => tradePriceTag(`TP${index + 1}${setup.targets[index].label.startsWith('15m ')?' · 15m':''} ${formatPrice(target.price)}`, target.y, '#2bc5a8'));
     if (this.tracking) {
       this.tag(ctx, PLAN_PHASE_LABELS[this.tracking.phase], x1 + 6, Math.min(stopY, targets[0].y) + 12, '#b9c9ed', `setup:${setup.id}`, occupied, true);
       this.drawTrackingEvents(ctx, setup, occupied);
     }
     const ratio = targets[0].rewardRisk;
-    const ratioText = `${setup.strategyId?strategyName(setup.strategyId).split(' · ')[0]+' · ':''}${setup.direction === 'bullish' ? '多' : '空'} · R:R 1:${ratio < .01 ? ratio.toExponential(2) : ratio.toFixed(2)}`;
+    const ratioText = `${setup.strategyId?strategyName(setup.strategyId).split(' · ')[0]+' · ':''}${setup.direction === 'bullish' ? '多' : '空'} · 参考 R:R 1:${ratio < .01 ? ratio.toExponential(2) : ratio.toFixed(2)}`;
     this.tag(ctx, ratioText, x1 + 6, (entryY + targets[0].y) / 2, '#2bc5a8', `setup:${setup.id}`, occupied, false);
     ctx.restore();
   }
@@ -249,11 +249,11 @@ export class TradeOverlay implements ISeriesPrimitive {
 
   private tag(ctx: CanvasRenderingContext2D, text: string, preferredX: number, preferredY: number, color: string, id: string, occupied: LabelBox[], essential: boolean, anchor?: { x: number; y: number }): void {
     ctx.save();
-    ctx.font = '500 10px Arial, "Segoe UI", sans-serif';
+    ctx.font = '500 12px Arial, "Segoe UI", sans-serif';
     const width = ctx.measureText(text).width + 10;
     const left = Math.max(4, Math.min(preferredX, this.viewport.width - width - 4));
     const centerY = Math.max(10, Math.min(preferredY, this.viewport.height - 10));
-    const box = placeLabel({ left, top: centerY - 8, width: Math.min(width, this.viewport.width - 8), height: 16 }, this.viewport, occupied, essential);
+    const box = placeLabel({ left, top: centerY - 10, width: Math.min(width, this.viewport.width - 8), height: 20 }, this.viewport, occupied, essential);
     if (box) {
       if (anchor) {
         const closestX = Math.max(box.left, Math.min(anchor.x, box.left + box.width));
@@ -263,7 +263,7 @@ export class TradeOverlay implements ISeriesPrimitive {
       }
       ctx.fillStyle = 'rgba(19,23,34,.95)'; ctx.fillRect(box.left, box.top, box.width, box.height);
       ctx.fillStyle = color; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-      ctx.fillText(text, box.left + 5, box.top + 8);
+      ctx.fillText(text, box.left + 5, box.top + 10);
       this.labelHits.push({ id, box });
     }
     ctx.restore();

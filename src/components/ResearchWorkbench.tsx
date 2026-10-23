@@ -1,3 +1,5 @@
+import { PlanRoute } from './PlanRoute';
+import type { ResearchChartFocus } from './ResearchSnapshotChart';
 import { auditPlanScale, samePlanPolicy, type PlanPolicy } from '../../shared/planPolicy';
 import { STRATEGY_CATALOG_VERSION } from '../../shared/strategyCatalog';
 import { captureAnalysisChart } from '../chart/analysisCapture';
@@ -5,7 +7,7 @@ import { AnalysisRunDetails } from './AnalysisRunDetails';
 import type { AnalysisInputMode, ChartImage } from '../../shared/analysisInput';
 import type { AnalysisDiagnostics } from '../../shared/analysisDiagnostics';
 import { ALL_CHART_LAYERS, chartStructureProjection } from '../chart/layers';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
 import type { Candle } from '../../shared/market';
 import { parseMarketCsv } from '../../shared/market';
 import type { MarketSnapshot } from '../../shared/liveMarket';
@@ -26,7 +28,8 @@ import type { AnalysisSource } from '../services/api';
 const date=(t:number)=>new Date(t*1000).toISOString().replace('T',' ').slice(5,16)+' UTC';
 const regimeNames={uptrend:'上升趋势',downtrend:'下降趋势',range:'区间震荡',transition:'转换观察',unavailable:'数据不足'};
 const standardTypes=['HH','HL','LH','LL','BOS','CHoCH','FVG','OB'] as StructureType[];
-interface Props {symbol:string;source:'live'|'csv'|'sample';candles:Candle[];timeframe:string;marketSnapshot:MarketSnapshot|null;analysisSource:AnalysisSource;notes:string;inputMode:AnalysisInputMode;planPolicy:PlanPolicy}
+export interface ResearchController { run: () => Promise<void> }
+interface Props {disabled?:boolean;controllerRef?:Ref<ResearchController>;compact?:boolean;onStatus?:(status:{ready:boolean;busy:boolean})=>void;onFocus?:(view:ResearchChartFocus)=>void;symbol:string;source:'live'|'csv'|'sample';candles:Candle[];timeframe:string;marketSnapshot:MarketSnapshot|null;analysisSource:AnalysisSource;notes:string;inputMode:AnalysisInputMode;planPolicy:PlanPolicy}
 export function ResearchWorkbench(props:Props){
  const {symbol,source,analysisSource}=props,key='research-1.0:'+source+':'+symbol;
  const [enabled,setEnabled]=useState(false),[state,setState]=useState<MarketState|null>(null),[loaded,setLoaded]=useState(false);
@@ -37,13 +40,16 @@ export function ResearchWorkbench(props:Props){
  const [selectedFrame,setSelectedFrame]=useState<ResearchFrame>('5m'),[chartVisible,setChartVisible]=useState(false),[selectedFactId,setSelectedFactId]=useState<string|null>(null),[focus,setFocus]=useState(0);
  const [focusedPlan,setFocusedPlan]=useState<{id:string;version:number;historical:boolean}|null>(null),[csvFrame,setCsvFrame]=useState<ResearchFrame>('5m'),[positionPlan,setPositionPlan]=useState<string|null>(null);
  const [reviewImages,setReviewImages]=useState<ChartImage[]>([]),[diagnostics,setDiagnostics]=useState<AnalysisDiagnostics|undefined>();
+ const [reviewElapsed,setReviewElapsed]=useState(0);
+ useEffect(()=>{if(!busy)return;const started=Date.now();setReviewElapsed(0);const timer=window.setInterval(()=>setReviewElapsed(Math.floor((Date.now()-started)/1000)),1000);return()=>window.clearInterval(timer);},[busy]);
  const [fill,setFill]=useState({entry:'',quantity:'',time:''});
  const stateRef=useRef(state),propsRef=useRef(props),keyRef=useRef(key),loadedKey=useRef<string|null>(null),extraFrames=useRef<FrameInput[]>([]);
  const marketController=useRef<AbortController|null>(null),analysisController=useRef<AbortController|null>(null),loadingRef=useRef(false),lastClosed=useRef('');
  stateRef.current=state;propsRef.current=props;keyRef.current=key;
+ useEffect(()=>{props.onStatus?.({ready:loaded&&source!=='sample',busy:busy||loading});},[loaded,source,busy,loading,props.onStatus]);
  const commit=useCallback((next:MarketState|null)=>{stateRef.current=next;setState(next);},[]);
  useEffect(()=>{let active=true;loadedKey.current=null;setLoaded(false);setEnabled(false);commit(null);extraFrames.current=[];lastClosed.current='';setError('');setMessage('');setReviewImages([]);setDiagnostics(undefined);setOpportunityMember({});setFocusedCandidateId(null);
-  void loadResearchState(key).then(restored=>{if(!active)return;commit(restored);extraFrames.current=restored?RESEARCH_FRAMES.map(tf=>frameInput(restored.bundle.frames[tf])).filter(f=>f.source==='csv'&&f.timeframe!==propsRef.current.timeframe.toLowerCase()):[];if(restored)setMessage('已恢复本地历史状态；恢复更新前不是当前实时判断。');}).catch(e=>{if(active)setPersistError(String(e.message));}).finally(()=>{if(active){loadedKey.current=key;setLoaded(true);}});
+  void loadResearchState(key).then(restored=>{if(!active)return;commit(restored);extraFrames.current=restored?RESEARCH_FRAMES.map(tf=>frameInput(restored.bundle.frames[tf])).filter(f=>f.source==='csv'&&f.timeframe!==propsRef.current.timeframe.toLowerCase()):[];if(restored)setMessage(restored.catalogVersion!==STRATEGY_CATALOG_VERSION?'计划规则已升级，请点击顶部生成新计划；旧记录仅供查看。':'已恢复本地历史状态；恢复更新前不是当前实时判断。');}).catch(e=>{if(active)setPersistError(String(e.message));}).finally(()=>{if(active){loadedKey.current=key;setLoaded(true);}});
   return()=>{active=false;marketController.current?.abort();analysisController.current?.abort();loadingRef.current=false;};
  },[key,commit]);
  useEffect(()=>{if(!state||loadedKey.current!==key)return;const timer=window.setTimeout(()=>{void saveResearchState(key,state).then(()=>setPersistError('')).catch(e=>setPersistError(e.message));},500);return()=>window.clearTimeout(timer);},[key,state]);
@@ -60,7 +66,7 @@ export function ResearchWorkbench(props:Props){
     const asOf=all.find(f=>f.timeframe==='1m'&&f.candles.length)?.observedAt??Math.max(...all.map(f=>f.observedAt));bundle=makeResearchBundle(p.symbol,all,asOf);
    }
    if(controller.signal.aborted||keyRef.current!==requestKey)return;
-   commit(updateMarketState(stateRef.current,bundle,'用户刷新或已收盘行情本地更新',Date.now(),propsRef.current.planPolicy));setMessage('规则已更新；未自动调用模型。');
+   const next=updateMarketState(stateRef.current,bundle,'用户刷新或已收盘行情本地更新',Date.now(),propsRef.current.planPolicy);commit(next);setMessage('规则已更新；未自动调用模型。');return next;
   }catch(e){if(keyRef.current===requestKey&&!controller.signal.aborted)setError(e instanceof Error?e.message:'研究行情更新失败，保留原状态并标记暂停。');else if(keyRef.current===requestKey)setError('多周期行情更新超时，保留原快照，不能视为当前实时判断。');}
   finally{window.clearTimeout(timer);if(marketController.current===controller){loadingRef.current=false;marketController.current=null;setLoading(false);}}
  },[commit]);
@@ -68,18 +74,29 @@ export function ResearchWorkbench(props:Props){
  useEffect(()=>{const snapshot=props.marketSnapshot;if(!enabled||source!=='live'||!snapshot)return;const bars=closedMarketCandles(snapshot),signature=contentId(bars.slice(-5));if(signature!==lastClosed.current){lastClosed.current=signature;void refresh();}},[enabled,source,props.marketSnapshot,refresh]);
  useEffect(()=>{if(!enabled&&marketController.current)marketController.current.abort();},[enabled]);
  useEffect(()=>{if(stateRef.current&&loadedKey.current===key&&!samePlanPolicy(stateRef.current.planPolicy,props.planPolicy))commit(updateMarketState(stateRef.current,stateRef.current.bundle,'计划幅度偏好调整',Date.now(),props.planPolicy));},[props.planPolicy,key,loaded,commit]);
- async function review(){const current=stateRef.current;if(!current||analysisController.current)return;const context=modelContext(current),requestKey=keyRef.current,controller=new AbortController();analysisController.current=controller;setBusy(true);setError('');const timer=window.setTimeout(()=>controller.abort(),305000);
+ async function review(captured?:MarketState){const current=captured??stateRef.current;if(!current||analysisController.current||propsRef.current.disabled)return;const context=modelContext(current),requestKey=keyRef.current,controller=new AbortController();analysisController.current=controller;setBusy(true);setError('');const timer=window.setTimeout(()=>controller.abort(),305000);
   try{const images:ChartImage[]=[];const p=propsRef.current;if(p.inputMode==='hybrid'&&p.analysisSource!=='mock'){setMessage('正在生成固定快照截图…');for(const tf of RESEARCH_FRAMES){const frame=context.bundle.frames[tf];if(frame.candles.length>=10)images.push(await captureAnalysisChart(frame.candles,frame.symbol,tf,controller.signal));}}
    setReviewImages(images);setDiagnostics(undefined);setMessage('正在审阅固定快照，校验通过后显示结果…');
    const result=await requestResearch(context,p.analysisSource,p.notes,controller.signal,{inputMode:images.length?'hybrid':'data',images});if(controller.signal.aborted||requestKey!==keyRef.current||!stateRef.current)return;setDiagnostics(result.diagnostics);
-   commit(acceptInterpretation(stateRef.current,context,result.analysis,result.model,result.source));setMessage((result.source==='ai'?'AI审阅完成':'本地占位审阅完成，未使用模型')+'；原始事实与计划价格未改写。'+(result.usage?' 输入 '+result.usage.inputTokens+' / 输出 '+result.usage.outputTokens+' tokens':'')+(result.analysisAttempts===2?'；已进行一次有界修正':''));
+   const accepted=acceptInterpretation(stateRef.current,context,result.analysis,result.model,result.source);commit(accepted);setMessage((result.source==='ai'?'AI审阅完成':'本地占位审阅完成，未使用模型')+'；原始事实与计划价格未改写。'+(result.usage?' 输入 '+result.usage.inputTokens+' / 输出 '+result.usage.outputTokens+' tokens':'')+(result.analysisAttempts===2?'；已进行一次有界修正':''));return accepted;
   }catch(e){if(requestKey===keyRef.current)setError(controller.signal.aborted?'已取消或超时，保留之前的研究状态。':e instanceof Error?e.message:'研究审阅失败。');}
   finally{window.clearTimeout(timer);if(analysisController.current===controller){analysisController.current=null;setBusy(false);}}
  }
+ useImperativeHandle(props.controllerRef,()=>({run:async()=>{
+  if(!loaded||loadingRef.current||analysisController.current||propsRef.current.disabled)return;
+  setEnabled(true);
+  const next=await refresh();
+  // A failed refresh must never review an old snapshot under a new/current label.
+  if(next&&next.symbol===propsRef.current.symbol){const reviewed=await review(next),explanation=reviewed?.interpretation.at(-1);if(reviewed&&explanation?.source==='ai'&&!explanation.staleReason&&explanation.snapshotId===reviewed.bundle.id){const best=reviewed.scenarios.find(c=>c.stage==='conditional'&&explanation.value.strategyReviews.some(r=>r.candidateId===c.id&&r.decision==='retain'));if(best)locateCandidate(best);}}
+ }}));
+ function externalFocus(tf:ResearchFrame,setup:import('../../shared/analysis').TradeSetup|null,factId:string|null,label:string,frame=stateRef.current?.bundle.frames[tf],tracking?:import('../../shared/tradeTracking').PlanTrackingResult){
+  if(!props.onFocus||!frame||!stateRef.current)return false;
+  props.onFocus({frame,setup,factId,label,tracking,sessionId:stateRef.current.sessionId});return true;
+ }
  function action(run:(s:MarketState)=>MarketState):boolean{if(!stateRef.current)return false;try{commit(run(stateRef.current));setError('');return true;}catch(e){setError(e instanceof Error?e.message:'状态更新失败');return false;}}
- function locateCandidate(candidate:StrategyCandidate){setLayers(v=>({...v,plans:true,primary:true}));setFocusedPlan(null);setFocusedCandidateId(candidate.id);setSelectedFactId(null);setSelectedFrame('1m');setChartVisible(true);setFocus(v=>v+1);}
- function locate(tf:ResearchFrame,id:string|null=null){setFocusedCandidateId(null);const type=stateRef.current&&id?currentFacts(stateRef.current).find(f=>f.id===id)?.type:undefined;setLayers(v=>({...v,[type&&['FVG','OB','sweep'].includes(type)?'evidence':'primary']:true}));setSelectedFrame(tf);setSelectedFactId(id);setFocusedPlan(null);setChartVisible(true);setFocus(v=>v+1);}
- function locatePlan(plan:ManagedPlan,version:number,historical=true){setFocusedCandidateId(null);setLayers(v=>({...v,plans:true}));setFocusedPlan({id:plan.id,version,historical});setSelectedFactId(null);setSelectedFrame('1m');setChartVisible(true);setFocus(v=>v+1);}
+ function locateCandidate(candidate:StrategyCandidate){if(externalFocus('1m',candidate.setup,null,'候选 · '+strategyName(candidate.strategyId)))return;setLayers(v=>({...v,plans:true,primary:true}));setFocusedPlan(null);setFocusedCandidateId(candidate.id);setSelectedFactId(null);setSelectedFrame('1m');setChartVisible(true);setFocus(v=>v+1);}
+ function locate(tf:ResearchFrame,id:string|null=null){if(externalFocus(tf,null,id,tf+' 规则依据'))return;setFocusedCandidateId(null);const type=stateRef.current&&id?currentFacts(stateRef.current).find(f=>f.id===id)?.type:undefined;setLayers(v=>({...v,[type&&['FVG','OB','sweep'].includes(type)?'evidence':'primary']:true}));setSelectedFrame(tf);setSelectedFactId(id);setFocusedPlan(null);setChartVisible(true);setFocus(v=>v+1);}
+ function locatePlan(plan:ManagedPlan,version:number,historical=true){const v=plan.versions.find(v=>v.version===version);if(v&&externalFocus('1m',v.setup,null,(historical?'历史原始快照':'当前快照 / 历史参考计划')+' · v'+version,historical?stateRef.current?.snapshots[v.snapshotIds['1m']]:stateRef.current?.bundle.frames['1m'],historical?undefined:plan.tracking??undefined))return;setFocusedCandidateId(null);setLayers(v=>({...v,plans:true}));setFocusedPlan({id:plan.id,version,historical});setSelectedFactId(null);setSelectedFrame('1m');setChartVisible(true);setFocus(v=>v+1);}
  function download(){if(!state)return;const url=URL.createObjectURL(new Blob([JSON.stringify(exportResearchState(state),null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='research-'+symbol+'-v'+state.version+'.json';a.click();URL.revokeObjectURL(url);}
  async function importFrame(file:File){try{if(source==='live')throw new Error('实时工作台使用交易所数据。请先切换CSV模式再补充周期。');if(file.size>2*1024*1024)throw new Error('CSV超过2MB。');const rows=parseMarketCsv(await file.text()).candles.slice(-300),observedAt=(rows.at(-1)?.timestamp??0)+FRAME_SECONDS[csvFrame];
    const input:FrameInput={symbol,timeframe:csvFrame,source:'csv',closure:'user-declared',observedAt,candles:rows,lastClosedTime:rows.at(-1)?.timestamp??null,derivedFrom:null,unavailableReason:null};
@@ -87,7 +104,7 @@ export function ResearchWorkbench(props:Props){
   }catch(e){setError(e instanceof Error?e.message:'CSV周期导入失败。');}}
  async function reset(){if(!window.confirm('开始新研究会话将清除本地当前会话。请先导出，确定继续？'))return;try{setEnabled(false);await clearResearchState(key);commit(null);setMessage('已清理当前会话；再次开启将从真实输入建立新状态。');setFocusedPlan(null);setChartVisible(false);}catch(e){setError(String(e));}}
  const facts=useMemo(()=>state?currentFacts(state):[],[state]);
- const opportunities=useMemo(()=>groupStrategyOpportunities(state?.scenarios??[],facts),[state?.scenarios,facts]);
+ const opportunities=useMemo(()=>groupStrategyOpportunities(state?.catalogVersion===STRATEGY_CATALOG_VERSION?state.scenarios:[],facts),[state?.scenarios,facts]);
  const focusedCandidate=state?.scenarios.find(c=>c.id===focusedCandidateId&&c.stage==='conditional');
  const activePlan=state?.plans.find(p=>p.id===focusedPlan?.id),planVersion=activePlan?.versions.find(v=>v.version===focusedPlan?.version),displaySetup=planVersion?.setup??focusedCandidate?.setup??null;
  const chartFrame=state?(planVersion&&focusedPlan?.historical?state.snapshots[planVersion.snapshotIds['1m']]:state.bundle.frames[selectedFrame]):null;
@@ -105,23 +122,27 @@ export function ResearchWorkbench(props:Props){
   {c.triggerSpec&&<p><b>本策略触发：</b>{c.triggerSpec.summary} · 参考区 {formatPrice(c.triggerSpec.entryLow)} – {formatPrice(c.triggerSpec.entryHigh)} · 确认价 {formatPrice(c.triggerSpec.confirmationPrice)}</p>}
   <ul className="research-checks">{c.checks.map(check=><li key={check.key} className={check.passed?'passed':'pending'}><b>{check.passed?'✓':'○'} {check.label} {check.weight?'('+check.awarded+'/'+check.weight+')':''}</b><span>{check.reason}</span></li>)}</ul>
   {c.conflicts.map((r,i)=><p className="research-conflict" key={'conflict-'+i}>{r}</p>)}{c.uncertainties.map((r,i)=><p key={'uncertain-'+i}>待核验：{r}</p>)}
+  {c.horizon&&<PlanRoute candidate={c} onLevel={level=>locate(level.timeframe,level.structureId)}/>}
   {c.selection&&<details className="research-selection"><summary>结构比较：审阅 {c.selection.considered} 项，合格 {c.selection.eligible} 项</summary><p>{c.selection.reason}</p>{c.selection.alternatives.map((a,i)=>{const fact=facts.find(f=>f.id===a.primaryFactId);return <div key={a.primaryFactId+'-'+i}><button disabled={!fact} onClick={()=>fact&&locate(fact.timeframe,fact.id)}>{fact?fact.timeframe+' '+fact.type+' · '+date(fact.knownAt):a.primaryFactId}</button><p>{a.stage==='conditional'?'条件候选':'等待'} · 规则符合度 {a.score}/10 · {a.reason}</p>{a.entry!==null&&<small>E {formatPrice(a.entry)} / SL {a.stopLoss===null?'—':formatPrice(a.stopLoss)} / TP {a.target===null?'—':formatPrice(a.target)}</small>}</div>;})}</details>}
   <details><summary>策略定义、支持与反对依据</summary>{strategy&&<><p>环境：{strategy.environment}</p><p>前置：{strategy.prerequisites}</p><p>目标：{strategy.targetRule}</p><p>失效：{strategy.invalidation}</p></>}<div className="related-structures">{[...new Set([...c.supportIds,...c.oppositionIds])].map(id=>{const f=facts.find(f=>f.id===id);return f?<button key={id} onClick={()=>locate(f.timeframe,id)}>{c.oppositionIds.includes(id)?'反对':'支持'} · {f.timeframe} {f.type} {formatPrice(f.low)}</button>:null;})}</div></details>
  </>;}
- return <section className="research-workbench panel" aria-label="多周期研究工作台">
-  <div className="research-heading"><div><span className="eyebrow">CONTINUOUS RESEARCH</span><h2>多周期研究工作台</h2><p>15m 背景 / 5m 机会 / 1m 触发</p></div><div className="research-actions">
+ return <section className={"research-workbench panel"+(props.compact?" research-integrated":"")} aria-label="多周期研究工作台">
+  <div className="research-heading"><div><span className="eyebrow">CONTINUOUS RESEARCH</span><h2>{props.compact?"多周期交易计划":"多周期研究工作台"}</h2><p>15m 定目标 · 5m 定保护 · 1m 等触发</p></div><details className="research-tools" open={props.compact?undefined:true}><summary>更新与导出</summary><div className="research-actions">
    <button className="button secondary" disabled={!loaded||source==='sample'} onClick={()=>setEnabled(v=>!v)}>{enabled?'暂停本地更新':state?'恢复本地更新':'开启多周期研究'}</button>
    <button className="button secondary" disabled={!loaded||loading||!enabled} onClick={()=>void refresh()}>{loading?'刷新中…':'更新规则'}</button>
-   <button className="button primary" disabled={!state||busy||state.capacityReached} onClick={()=>void review()}>{busy?'正在审阅…':analysisSource==='mock'?'本地占位审阅':'AI重新评估'}</button>
-   {busy&&<button className="button secondary" onClick={()=>analysisController.current?.abort()}>取消审阅</button>}
+   {!props.compact&&<button className="button secondary" disabled={props.disabled||!state||busy||loading||state.capacityReached} onClick={()=>void review()}>{busy?'正在审阅…':analysisSource==='mock'?'本地占位审阅':'AI重新评估'}</button>}
+   {busy&&!props.compact&&<button className="button secondary" onClick={()=>analysisController.current?.abort()}>取消审阅</button>}
    <button className="button text-button" disabled={!state} onClick={download}>导出研究状态</button>
-  </div></div>
+  </div></details></div>
   <details className="research-policy"><summary>研究规则与使用说明</summary><p>仅主动审阅调用模型，普通行情更新不消耗模型额度。规则评分表示符合度，不是胜率。条件满足与参考SL/TP触及均不代表成交。{source==='csv'&&' CSV末根收盘由使用者声明，聚合只使用完整1m分组。'}</p></details>
   {(error||persistError)&&<div className="research-warning" role="alert">{error}{persistError&&<p>{persistError}</p>}历史状态保留；数据异常时请重新评估。</div>}
-  {message&&<p role="status" className="research-message">{message}</p>}
+  {message&&<p role="status" className="research-message">{message}{busy&&" · "+reviewElapsed+"秒"}</p>}
+  {busy&&props.compact&&<button className="button secondary" onClick={()=>analysisController.current?.abort()}>取消本次审阅</button>}
   <AnalysisRunDetails images={reviewImages} diagnostics={diagnostics}/>
    {source==='csv'&&<div className="research-csv"><label>补充实际周期 <select aria-label="补充CSV周期" value={csvFrame} onChange={e=>setCsvFrame(e.target.value as ResearchFrame)}>{RESEARCH_FRAMES.map(tf=><option key={tf}>{tf}</option>)}</select></label><label className="button secondary">导入该周期CSV<input aria-label="导入研究周期CSV" type="file" accept=".csv" onChange={e=>{const file=e.target.files?.[0];if(file)void importFrame(file);e.target.value='';}}/></label><span>标的沿用 {symbol}，请提供同一标的的数据。</span></div>}
-  {!state?<div className="advanced-empty">{loaded?'开启后获取真实15m / 5m / 1m快照，或使用已提供CSV。没有合格策略时将明确等待。':'正在读取本地研究状态…'}</div>:<>
+  {!state?<div className="advanced-empty">{loaded?'点击顶部「生成多周期计划」，获取实际15m / 5m / 1m已收盘快照。没有合理保护和目标空间时等待。':'正在读取本地研究状态…'}</div>:<>
+   {props.compact&&<div className="plan-role-strip" aria-label="计划周期分工"><span><b>15m</b>背景与主要目标</span><span><b>5m</b>机会与保护结构</span><span><b>1m</b>回踩与触发复核</span></div>}
+   <details className="research-context" open={props.compact?undefined:true}><summary>周期背景与本次变化 · {date(state.asOf)}</summary>
    <div className="research-state-line"><strong>Market State v{state.version}</strong><span>{symbol} · {date(state.asOf)} · {enabled&&!error?'规则持续更新':'历史快照 / 更新暂停'}</span><span>事实 {facts.length} · 计划 {state.plans.length} · 本地持仓登记 {state.positions.length}</span></div>
    {interpretation&&<p className="research-current-judgment"><b>{interpretation.source==='ai'?'AI判断':'本地占位'}：</b>{interpretation.value.summary}{interpretation.staleReason&&<span> · {interpretation.staleReason}</span>}{!interpretationCurrent&&<strong className="research-conflict"> · 原快照解释，待重新评估</strong>}</p>}
    {(state.needsReview.length>0||state.capacityReached)&&<div className="research-warning" aria-label="市场状态复核提示">{state.needsReview.map(r=><p key={r}>{r}</p>)}</div>}
@@ -135,6 +156,7 @@ export function ResearchWorkbench(props:Props){
    <details className="research-state-summary"><summary>市场状态变化与AI解释</summary><p>上一次：{state.history.length>1?'v'+state.history[state.history.length-2].version+' · '+date(state.history[state.history.length-2].asOf):'首次建立上下文'}。本次：{state.history.at(-1)?.reason}。</p>
     {interpretation?<><p><b>{interpretation.source==='ai'?'AI判断':'未审阅占位'}</b> · 基于状态 v{interpretation.basedOnVersion} · {interpretationCurrent?'与当前输入一致':'行情已变化，解释仅属于原快照'}</p><p>{interpretation.value.summary}</p>{interpretation.value.conflicts.map((c,i)=><p className="research-conflict" key={i}>{c.timeframes.join(' / ')}：{c.reason}</p>)}{interpretation.value.uncertainties.map((u,i)=><p key={i}>不确定性：{u}</p>)}</>:<p>尚无AI解释。当前仅为确定性规则状态，不会伪装为模型结论。</p>}
     <ul>{state.events.filter(e=>e.stateVersion===state.version).slice(-8).map(e=><li key={e.id}>{date(e.knownAt)} · {e.reason}</li>)}</ul>
+   </details>
    </details>
    {chartVisible&&chartFrame&&<div className="research-chart" aria-label="研究定位图表"><div className="research-chart-heading"><strong>{selectedFrame} · {planVersion?focusedPlan?.historical?'计划v'+planVersion.version+'原始快照':'当前行情 / 管理计划v'+planVersion.version:focusedCandidate?'当前候选 / '+strategyName(focusedCandidate.strategyId):'当前规则快照'}</strong><button className="button text-button" onClick={()=>setChartVisible(false)}>收起图表</button></div>
     <div className="research-actions" role="group" aria-label="研究图表图层">{([{key:'primary',label:'主结构'},{key:'evidence',label:'辅助证据'},{key:'plans',label:'交易计划'}] as const).map(layer=><label key={layer.key}><input type="checkbox" checked={layers[layer.key]} onChange={e=>setLayers(v=>({...v,[layer.key]:e.target.checked}))}/>{layer.label}</label>)}</div>
@@ -151,11 +173,13 @@ export function ResearchWorkbench(props:Props){
     <div className="research-card-title"><button onClick={()=>{const id=c.primaryFactId??c.sourceByFrame['5m'][0];const f=facts.find(f=>f.id===id);if(f)locate(f.timeframe,f.id);}}>{strategyName(c.strategyId)}</button><span className={c.direction==='bullish'?'is-bullish':'is-bearish'}>{c.direction==='bullish'?'偏多':'偏空'} · 待触发</span></div>
     {group.strategyIds.length>1&&<p className="research-opportunity-aliases">同事件其他分类：{group.strategyIds.filter(id=>id!==c.strategyId).map(id=><span key={id}>{strategyName(id)}</span>)}</p>}
     {group.members.length>1&&<label className="research-member-picker">查看独立计划<select aria-label={'机会计划选择 '+group.id} value={c.id} onChange={e=>{const id=e.target.value;setOpportunityMember(v=>({...v,[group.id]:id}));const member=group.members.find(m=>m.id===id);if(member&&chartVisible&&focusedCandidateId)locateCandidate(member);}}>{group.members.map(member=><option key={member.id} value={member.id}>{strategyName(member.strategyId)}</option>)}</select></label>}
-    <div className="research-opportunity-prices"><button onClick={()=>locateCandidate(c)}><span>参考入场{c.triggerSpec?'区域':''}</span><strong>{c.triggerSpec&&c.triggerSpec.entryLow!==c.triggerSpec.entryHigh?formatPrice(c.triggerSpec.entryLow)+' – '+formatPrice(c.triggerSpec.entryHigh):formatPrice(setup.entry)}</strong></button><button onClick={()=>{const f=facts.find(f=>f.id===setup.basis?.stopStructureId);if(f)locate(f.timeframe,f.id);}}><span>保护 SL · {risk.riskPct.toFixed(2)}%</span><strong>{formatPrice(setup.stopLoss)}</strong></button><button onClick={()=>{const f=facts.find(f=>f.id===setup.basis?.targetStructureIds[0]);if(f)locate(f.timeframe,f.id);}}><span>TP1 · {risk.ratio.toFixed(2)}R</span><strong>{formatPrice(setup.targets[0].price)}</strong></button></div>
+    <div className="research-opportunity-prices"><button onClick={()=>locateCandidate(c)}><span>参考入场{c.triggerSpec?'区域':''}</span><strong>{c.triggerSpec&&c.triggerSpec.entryLow!==c.triggerSpec.entryHigh?formatPrice(c.triggerSpec.entryLow)+' – '+formatPrice(c.triggerSpec.entryHigh):formatPrice(setup.entry)}</strong></button><button onClick={()=>{const f=facts.find(f=>f.id===setup.basis?.stopStructureId);if(f)locate(f.timeframe,f.id);}}><span>保护 SL · {risk.riskPct.toFixed(2)}%</span><strong>{formatPrice(setup.stopLoss)}</strong></button><button onClick={()=>{const f=facts.find(f=>f.id===setup.basis?.targetStructureIds[0]);if(f)locate(f.timeframe,f.id);}}><span>{c.horizon?.mode==='structural'?'15m TP1':'TP1'} · 参考 {risk.ratio.toFixed(2)}R</span><strong>{formatPrice(setup.targets[0].price)}</strong></button></div>
+    <PlanRoute candidate={c} setup={setup} lastPrice={state.bundle.frames['1m'].candles.at(-1)?.close} onLevel={level=>locate(level.timeframe,level.structureId)}/>
     <p className="research-opportunity-trigger"><b>下一步：</b>{c.triggerSpec?.summary??setup.trigger}</p>
+    {review&&<p className="research-ai-decision"><b>{interpretation?.source==='ai'?'AI审阅':'本地占位'} · {review.decision==='retain'?'保留条件候选':'等待'}</b>：{review.reason}</p>}
     <p className="research-opportunity-meta">规则符合度 {c.score}/10 · 风险距离 {formatPrice(risk.risk)} · 首目标空间 {formatPrice(Math.abs(setup.targets[0].price-setup.entry))} · 有效至 {date(c.expiresAt)}</p>
     <details className="research-opportunity-details"><summary>{group.members.length>1?'各策略独立条件与证据':'条件与结构选择依据'}</summary><p>{group.explanation}</p>{group.members.map(member=><div className="research-opportunity-member" key={member.id}><h4>{strategyName(member.strategyId)}</h4>{member.setup&&<p>E {formatPrice(member.setup.entry)} / SL {formatPrice(member.setup.stopLoss)} / {member.setup.targets.map((target,i)=>'TP'+(i+1)+' '+formatPrice(target.price)).join(' · ')}</p>}<p>{member.setup?.trigger}</p><p>取消：{member.setup?.invalidation}</p>{candidateDetails(member)}<button className="button text-button" onClick={()=>{setOpportunityMember(v=>({...v,[group.id]:member.id}));locateCandidate(member);}}>选择并定位此策略</button></div>)}</details>
-    <div className="research-actions"><button className="button secondary" onClick={()=>locateCandidate(c)}>定位当前候选</button><button className="button primary" disabled={state.capacityReached} onClick={()=>action(s=>saveCandidatePlan(s,c.id,review?.decision==='retain'?'用户保存AI审阅过的规则候选':'用户保存未经过AI审阅的规则候选',review?.decision==='retain'?'ai-reviewed':'rule-candidate'))}>保存该策略候选</button></div>
+    <div className="research-actions"><button className="button secondary" onClick={()=>locateCandidate(c)}>定位当前候选</button><button className="button secondary" disabled={state.capacityReached} onClick={()=>action(s=>saveCandidatePlan(s,c.id,review?.decision==='retain'?'用户保存AI审阅过的规则候选':'用户保存未经过AI审阅的规则候选',review?.decision==='retain'?'ai-reviewed':'rule-candidate'))}>保存该策略候选</button></div>
    </article>;})}</div>
    <details className="research-strategy-list"><summary>全部策略与等待原因 · {state.scenarios.filter(c=>c.stage==='conditional').length} 个条件候选 / {state.scenarios.filter(c=>c.stage!=='conditional').length} 个等待</summary>
    <p className="research-opportunity-note">下面保留全部独立策略数据。上方已合并同事件展示，评分不相加，保存仍以单个策略为单位。</p><div className="research-candidate-grid">{state.scenarios.map(c=>{const review=interpretationCurrent?interpretation?.value.strategyReviews.find(r=>r.candidateId===c.id):null;return <article className="research-candidate" data-stage={c.stage} key={c.id}>
@@ -166,12 +190,13 @@ export function ResearchWorkbench(props:Props){
     <div className="related-structures">{RESEARCH_FRAMES.map(tf=><button key={tf} disabled={!c.sourceByFrame[tf].length} onClick={()=>locate(tf,c.sourceByFrame[tf][0])}>{tf}依据 {c.sourceByFrame[tf].length}</button>)}</div>
     <button className="button secondary" disabled={!c.setup||state.capacityReached} onClick={()=>action(s=>saveCandidatePlan(s,c.id,review?.decision==='retain'?'用户保存AI审阅过的规则候选':'用户保存未经过AI审阅的规则候选',review?.decision==='retain'?'ai-reviewed':'rule-candidate'))}>保存研究候选</button>
    </article>;})}</div>
-   </details><p className="research-scale-note">当前幅度偏好：{props.planPolicy.profile==='structural'?'结构波段':'局部短线'} · 保护至少 {props.planPolicy.minRiskPct}% · 首目标至少 {props.planPolicy.minTargetPct}% · 数值不足时等待，不自动移动价位。</p><div className="research-section-title"><h3>计划与目标管理</h3><span>候选 / 条件满足 / 用户登记持仓分别记录</span></div>
+   </details><p className="research-scale-note">当前幅度偏好：{props.planPolicy.profile==='structural'?'结构波段':'局部短线'} · 保护至少 {props.planPolicy.minRiskPct}% · 首目标至少 {props.planPolicy.minTargetPct}% · 数值不足时等待，不自动移动价位。</p><details className="research-management"><summary>已保存计划与版本管理 · {state.plans.length}</summary><div className="research-section-title"><h3>计划与目标管理</h3><span>候选 / 条件满足 / 用户登记持仓分别记录</span></div>
    {!state.plans.length&&<div className="advanced-empty">尚未保存合格的数值候选。所有门槛通过后可保存；AI不会为填满面板强行开单。</div>}
    <div className="research-plans">{state.plans.map(plan=>{const v=plan.versions.at(-1)!,risk=calculateRiskReward(v.setup),proposal=planUpdateProposal(state,plan);return <article className="research-plan" key={plan.id}><p className="strategy-badge">{v.candidate.planPolicy?.profile==='structural'?'结构波段':'原始 / 短线偏好'}</p>
     <div className="research-card-title"><h4>{STRATEGY_CATALOG.find(s=>s.id===plan.strategyId)?.name} · {plan.source==='ai-reviewed'?'已审阅候选':'规则候选'}</h4><b>{PLAN_PHASE_LABELS[plan.status as PlanPhase]??plan.status}</b></div>
     <p className="research-plan-version">版本 {v.version} · {date(v.effectiveAt)}</p>
     <div className="trade-price-grid"><div><span>参考入场</span><strong>{formatPrice(v.setup.entry)}</strong></div><div><span>5m保护止损</span><strong>{formatPrice(v.setup.stopLoss)}</strong></div><div><span>价格风险距离</span><strong>{formatPrice(risk.risk)} · {risk.riskPct.toFixed(2)}%</strong></div></div>
+    <PlanRoute candidate={v.candidate} setup={v.setup} lastPrice={state.bundle.frames['1m'].candles.at(-1)?.close} triggerPrice={plan.tracking?.events.find(e=>e.type==='conditions-met')?.price} onLevel={level=>locate(level.timeframe,level.structureId)}/>
     {targetObservations(state,plan).map((t,i)=><div className="research-target" key={i}><b>TP{i+1} {formatPrice(t.price)} · {calculateRiskReward(v.setup,i).ratio.toFixed(2)}R</b><button onClick={()=>locate(t.timeframe,t.structureId)}>{t.timeframe}结构依据</button><details><summary>{t.status} · 目标状态依据</summary><p>{t.reason}</p><small>形成 {date(t.formedAt)} · 最近复核 {date(t.updatedAt)}</small></details></div>)}
     <p><b>触发：</b>{v.setup.trigger}</p><p><b>取消：</b>{v.setup.invalidation}</p><p>等待期限：{v.setup.tracking?.expiresAfterBars??0} 根1m；剩余 {Math.max(0,(v.setup.tracking?.expiresAfterBars??0)-(plan.tracking?.checkedBars??0))} 根。已核验 {plan.tracking?.checkedBars??0} 根。{plan.tracking?.reason}</p>
     {plan.reviewReasons.map(r=><p className="research-conflict" key={r}>{r}</p>)}
@@ -182,6 +207,7 @@ export function ResearchWorkbench(props:Props){
    {positionPlan&&<form className="research-position-form" onSubmit={e=>{e.preventDefault();if(action(s=>recordActualPosition(s,positionPlan,{entry:Number(fill.entry),quantity:Number(fill.quantity),filledAt:Math.floor(new Date(fill.time).getTime()/1000)})))setPositionPlan(null);}}><h4>仅用户明确登记后视为实际持仓</h4><label>实际成交价<input required type="number" step="any" min="0" value={fill.entry} onChange={e=>setFill(f=>({...f,entry:e.target.value}))}/></label><label>实际数量<input required type="number" step="any" min="0" value={fill.quantity} onChange={e=>setFill(f=>({...f,quantity:e.target.value}))}/></label><label>真实成交时间（本机时区）<input required type="datetime-local" value={fill.time} onChange={e=>setFill(f=>({...f,time:e.target.value}))}/></label><button className="button primary">确认登记真实成交</button><button type="button" className="button secondary" onClick={()=>setPositionPlan(null)}>取消</button></form>}
    {interpretation?.value.positionReviews.map(review=><article className="research-position" key={review.positionId}><b>AI持仓方案复核 · {review.decision}</b><p>{review.reason}</p><p>仅为人工复核方案，没有修改实际持仓、止损或执行分批止盈。{!interpretationCurrent&&'解释属于历史快照，需重新评估。'}</p><div className="related-structures">{review.evidenceIds.map(id=>{const f=facts.find(f=>f.id===id);return f?<button key={id} onClick={()=>locate(f.timeframe,id)}>{f.timeframe} {f.type} {formatPrice(f.low)}</button>:null;})}</div></article>)}
    {state.positions.map(p=><article className="research-position" key={p.id}><b>用户登记持仓 · {p.direction==='bullish'?'多':'空'} · {p.status}</b><p>成交 {formatPrice(p.entry)} / 数量 {p.quantity} / {date(p.filledAt)}</p>{p.review.map(r=><p key={r}>{r}</p>)}</article>)}
+   </details>
    <details className="research-history"><summary>状态变化与历史记录 · {state.events.length}事件 / {state.history.length}版本</summary><p>面板展示最近40项，完整输入、事实版本、策略评估、计划及事件全部在导出中保留。</p><ol>{state.events.slice(-40).reverse().map(e=><li key={e.id}><b>v{e.stateVersion} · {date(e.knownAt)}</b><span>{e.kind} · {e.reason}</span></li>)}</ol></details>
    <button className="button text-button research-clear" onClick={()=>void reset()} disabled={busy}>导出后开始新会话 / 清理本地状态</button>
   </>}

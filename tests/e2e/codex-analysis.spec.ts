@@ -22,7 +22,7 @@ test('Codex source requires a manual request and renders validated structures wi
   await expect(page.getByLabel('分析来源', { exact: true })).toHaveValue('codex');
   await expect(page.locator('.analysis-source-status')).toContainText('ChatGPT 登录已验证');
   expect(requests).toHaveLength(0);
-  await page.getByRole('button', { name: /AI 分析/ }).first().click();
+  await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect(page.getByRole('status').filter({ hasText: '分析完成' })).toContainText('Codex 额度分析');
   expect(requests).toHaveLength(1);
   expect(requests[0]).toMatchObject({ mode: 'ai', provider: 'codex' });
@@ -46,7 +46,7 @@ test('Codex errors are visible and never trigger an API billing fallback', async
   });
   await page.goto('/?demo=smc');
   await expect(page.getByLabel('分析来源', { exact: true })).toHaveValue('codex');
-  await page.getByRole('button', { name: /AI 分析/ }).first().click();
+  await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect(page.getByRole('alert')).toContainText('Codex 暂时不可用');
   expect(providers).toEqual(['codex']);
   await expect(page.getByLabel('分析来源', { exact: true })).toHaveValue('codex');
@@ -71,7 +71,7 @@ test('cancelling a Codex request unlocks controls and does not render a late res
   });
   await page.goto('/?demo=smc');
   await expect(page.getByLabel('分析来源', { exact: true })).toHaveValue('codex');
-  await page.getByRole('button', { name: /AI 分析/ }).first().click();
+  await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect(page.getByLabel('图表分析状态')).toContainText('正在分析');
   await expect(page.getByLabel('分析来源', { exact: true })).toBeDisabled();
   await page.getByLabel('图表分析状态').getByRole('button', { name: '取消分析', exact: true }).click();

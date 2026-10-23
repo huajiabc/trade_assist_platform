@@ -43,13 +43,13 @@ test('automatic CSV range sends exactly the latest 300 bars and manual input sen
   const toolbar = page.getByLabel('分析 K 线范围', { exact: true });
   await expect(page.getByRole('button', { name: '自动范围', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(toolbar).toContainText('将分析 300 根 K 线');
-  await page.getByRole('button', { name: /AI 分析/ }).first().click();
+  await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect(page.locator('.analysis-provenance')).toContainText('规则模拟');
   expect(requests).toHaveLength(1);
   expect(requests[0]).toEqual(snapshot.candles.slice(100));
 
   await page.getByRole('button', { name: '手动范围', exact: true }).click();
-  await expect(page.getByRole('button', { name: /AI 分析/ }).first()).toBeDisabled();
+  await expect(page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first()).toBeDisabled();
   await expect(toolbar).toContainText('请先在图表拖选 K 线范围');
   const from = page.getByLabel('范围开始 UTC', { exact: true });
   const to = page.getByLabel('范围结束 UTC', { exact: true });
@@ -81,19 +81,19 @@ test('manual selections below 10, above 300 or reversed cannot spend model quota
   await from.selectOption(String(snapshot.candles[0].timestamp));
   await to.selectOption(String(snapshot.candles[8].timestamp));
   await expect(toolbar).toContainText('当前 9 根');
-  await expect(page.getByRole('button', { name: /AI 分析/ }).first()).toBeDisabled();
+  await expect(page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first()).toBeDisabled();
   await to.selectOption(String(snapshot.candles[398].timestamp));
   await expect(toolbar).toContainText('所选 399 根，最多允许 300 根');
   await expect(to).toHaveValue(String(snapshot.candles[398].timestamp));
-  await expect(page.getByRole('button', { name: /AI 分析/ }).first()).toBeDisabled();
+  await expect(page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first()).toBeDisabled();
   await from.selectOption(String(snapshot.candles[200].timestamp));
   await to.selectOption(String(snapshot.candles[100].timestamp));
   await expect(toolbar).toContainText('范围开始不能晚于结束');
-  await expect(page.getByRole('button', { name: /AI 分析/ }).first()).toBeDisabled();
+  await expect(page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first()).toBeDisabled();
   expect(requests).toEqual([]);
   await to.selectOption(String(snapshot.candles[220].timestamp));
   await expect(toolbar).toContainText('将分析 21 根 K 线');
-  await page.getByRole('button', { name: /AI 分析/ }).first().click();
+  await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect.poll(() => requests.length).toBe(1);
   expect(requests[0]).toEqual(snapshot.candles.slice(200, 221));
 });
@@ -144,7 +144,7 @@ test('chart drag and two-click selection map to real closed-bar endpoints withou
     }
     return columns.length >= 2 && columns.at(-1)! - columns[0] > canvas.width * .3;
   }))).toBe(true);
-  await page.getByRole('button', { name: /AI 分析/ }).first().click();
+  await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect.poll(() => requests.length).toBe(1);
   expect(requests[0]).toEqual(selected);
   await expect(page.getByLabel('分析任务状态')).toHaveClass(/phase-success/);
