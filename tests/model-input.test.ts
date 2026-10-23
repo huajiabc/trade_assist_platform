@@ -101,7 +101,7 @@ describe('complete-window model input', () => {
       screenshot: { mimeType: 'image/png', base64: 'unused-test-image' } };
     const serialized = JSON.parse(JSON.stringify(buildAnalysisPayload(request)));
     expect(Object.keys(serialized).sort()).toEqual([
-      'task', 'timestampUnit', 'intervalSeconds', 'candleCloseStatus', 'analysisScope', 'reviewWindows', 'ruleIndicators', 'structureReview', 'outputBudgets', 'tradeRiskContext', 'tradePlanningTask', 'context', 'candles',
+      'task', 'timestampUnit', 'intervalSeconds', 'candleCloseStatus', 'analysisScope', 'reviewWindows', 'ruleIndicators', 'strategyCatalog', 'structureReview', 'outputBudgets', 'tradeRiskContext', 'tradePlanningTask', 'context', 'candles',
     ].sort());
     expect(serialized).not.toHaveProperty('structures');
     expect(serialized).not.toHaveProperty('priceAction');

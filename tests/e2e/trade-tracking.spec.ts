@@ -109,6 +109,7 @@ test('legacy 1.3 plans retain geometry but never acquire inferred machine trigge
   await fixture.refresh([future(1, { high: entry + distance * 4, close: entry + distance })]);
   await expect(phaseRegion(page).locator('[data-tracking-phase]')).toHaveAttribute('data-tracking-phase', 'manual');
   await expect(phaseRegion(page)).toContainText('不从文字猜测条件');
+  await page.getByText('图表显示设置 · PA / SMC / 指标',{exact:true}).click();
   await expect(page.getByRole('checkbox', { name: /开仓候选 \/ 盈亏区间/ })).toBeChecked();
   expect(fixture.requests()).toBe(1);
 });

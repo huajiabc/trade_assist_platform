@@ -169,3 +169,35 @@ test('loads actual SNDKUSDT public market when explicitly enabled', async ({ pag
   await page.screenshot({ path: 'test-results/sndkusdt-real-market.png', fullPage: true });
   expect(errors).toEqual([]);
 });
+
+
+test('automatically recovers an initial transient failure without loading samples or calling AI',async({page})=>{
+ let fail=true,calls=0,paid=0;await page.clock.install();
+ await page.route('**/api/market/stream?*',r=>r.abort());
+ await page.route('**/api/market/candles?*',r=>{calls++;return r.fulfill({status:fail?502:200,json:fail?{error:{message:'temporary exchange reset'}}:fixture('1m')});});
+ page.on('request',r=>{if(r.url().endsWith('/api/analyze'))paid++;});
+ await page.goto('/?live=SNDKUSDT&interval=1m');await expect(page.getByRole('alert')).toContainText('temporary exchange reset');await expect(page.locator('.stream-fallback-note')).toContainText('每30秒自动重试');
+ const before=calls;await page.clock.fastForward(29_000);expect(calls).toBe(before);await expect(page.locator('.price-stat strong')).toHaveText('—');
+ fail=false;await page.clock.fastForward(1_100);await expect(page.locator('.price-stat strong')).not.toHaveText('—');await expect(page.getByRole('alert')).toHaveCount(0);expect(calls).toBe(before+1);expect(paid).toBe(0);
+});
+
+test('pausing real-time updates cancels initial retries and resuming enables recovery',async({page})=>{
+ let fail=true,calls=0;await page.clock.install();await page.route('**/api/market/stream?*',r=>r.abort());
+ await page.route('**/api/market/candles?*',r=>{calls++;return r.fulfill({status:fail?503:200,json:fail?{error:{message:'temporary unavailable'}}:fixture('5m')});});
+ await page.goto('/');await expect(page.getByRole('alert')).toContainText('temporary unavailable');await page.getByRole('checkbox',{name:'实时更新',exact:true}).uncheck();const before=calls;fail=false;
+ await page.clock.fastForward(60_000);expect(calls).toBe(before);await expect(page.locator('.price-stat strong')).toHaveText('—');
+ await page.getByRole('checkbox',{name:'实时更新',exact:true}).check();await page.clock.fastForward(30_100);await expect(page.locator('.price-stat strong')).not.toHaveText('—');expect(calls).toBe(before+1);
+});
+
+test('switching contracts cancels the initial retry for the old symbol',async({page})=>{
+ const symbols:string[]=[];await page.clock.install();await page.route('**/api/market/stream?*',r=>r.abort());
+ await page.route('**/api/market/candles?*',r=>{const symbol=new URL(r.request().url()).searchParams.get('symbol')!;symbols.push(symbol);return r.fulfill({status:symbol==='SNDKUSDT'?502:200,json:symbol==='SNDKUSDT'?{error:{message:'temporary unavailable'}}:{...fixture('5m'),symbol}});});
+ await page.goto('/');await expect(page.getByRole('alert')).toContainText('temporary unavailable');const previous=symbols.filter(s=>s==='SNDKUSDT').length;
+ await page.getByLabel('合约标的',{exact:true}).fill('BTCUSDT');await page.getByRole('button',{name:'加载行情',exact:true}).click();await expect(page.locator('.live-market-status')).toContainText('BTCUSDT');
+ await page.getByRole('checkbox',{name:'实时更新',exact:true}).uncheck();await page.clock.fastForward(60_000);expect(symbols.filter(s=>s==='SNDKUSDT')).toHaveLength(previous);await expect(page.locator('.instrument-name')).toContainText('BTCUSDT');
+});
+
+test('invalid-symbol errors remain manual and do not create an automatic retry loop',async({page})=>{
+ let calls=0;await page.clock.install();await page.route('**/api/market/candles?*',r=>{calls++;return r.fulfill({status:400,json:{error:{message:'invalid symbol'}}});});
+ await page.goto('/');await expect(page.getByRole('alert')).toContainText('invalid symbol');const before=calls;await page.clock.fastForward(90_000);expect(calls).toBe(before);await expect(page.locator('.stream-fallback-note')).toHaveCount(0);
+});

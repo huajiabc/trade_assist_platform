@@ -10,6 +10,7 @@ test('independent hierarchy, raw coverage, exact rule navigation and zoom/pan su
  await expect(layers.getByRole('checkbox',{name:/主结构/})).toBeChecked();
  await expect(layers.getByRole('checkbox',{name:/辅助证据/})).toBeChecked();
  await expect(layers.getByRole('checkbox',{name:/交易计划/})).toBeChecked();
+ await page.getByText('结构覆盖明细',{exact:true}).click();
  const coverage=page.getByLabel('分析覆盖诊断'), original=await coverage.innerText();
  const chart=page.locator('.chart-host');
  await page.getByRole('button',{name:'重置图表视图'}).click();

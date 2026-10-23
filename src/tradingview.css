@@ -548,3 +548,50 @@ main { padding: 20px 24px 0; max-width: 1920px; }
 .research-clear { margin-top:12px; }
 @media(max-width:1100px){.research-candidate-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.research-frame-grid{grid-template-columns:1fr;}}
 @media(max-width:680px){.research-workbench{padding:14px;}.research-candidate-grid,.research-plans{grid-template-columns:1fr;}.research-chart{padding:0;}.research-chart .chart-host{height:300px;}.research-heading{gap:10px;}}
+
+/* Progressive disclosure keeps the live chart and actionable state above diagnostics. */
+.workspace-heading{padding-top:20px;padding-bottom:16px}.workspace-heading h1{font-size:28px}.workspace-heading .eyebrow{display:none}
+.analysis-source-bar{flex-wrap:wrap;gap:12px}.analysis-source-bar select{max-width:220px}
+.chart-display-options,.chart-diagnostics,.chart-indicator-details{border-bottom:1px solid #242936;color:#9299a8;font-size:11px}
+.chart-display-options>summary,.chart-diagnostics>summary,.chart-indicator-details>summary{padding:9px 16px;cursor:pointer;color:#9299a8}
+.chart-display-options[open]>summary,.chart-diagnostics[open]>summary{color:#b6c9e5}
+.analysis-run-details{margin:10px 16px;color:#9299a8;font-size:11px}.analysis-run-details>summary{cursor:pointer;color:#a9bcd7;padding:8px 0}.analysis-run-details p{line-height:1.7}.analysis-run-details figure{margin:12px 0}.analysis-run-details figcaption{margin-bottom:6px}.analysis-run-details img{width:100%;height:auto;display:block;border:1px solid #242936}
+.research-workbench{padding:18px 22px}.research-heading h2{font-size:17px}.research-heading .eyebrow{display:none}.research-heading p{margin-bottom:0}.research-policy>summary{cursor:pointer}.research-policy p{line-height:1.7}.research-workbench .analysis-run-details{margin-left:0;margin-right:0}
+.research-candidate{padding:14px}.research-candidate>p{font-size:11px}.research-candidate .research-next-condition{min-height:36px;color:#b6c9e5}.research-candidate-details{font-size:11px}.research-candidate-details>summary{cursor:pointer;padding:6px 0}.research-checks{margin-top:8px}.research-candidate-grid{align-items:start}
+@media(max-width:680px){.analysis-source-bar select{max-width:190px}.workspace-heading h1{font-size:23px}.research-workbench{padding:14px}}
+
+.research-strategy-list>summary{cursor:pointer;padding:14px 0;color:#b6c9e5;font-size:12px}.research-strategy-list[open]>summary{margin-bottom:8px}
+
+.research-current-judgment{font-size:12px;line-height:1.7;color:#c4cede;margin:8px 0 14px}.research-frame details.research-ai>summary{cursor:pointer;font-size:11px;line-height:1.7}
+
+#multi-timeframe-research{scroll-margin-top:24px;margin-top:20px}
+
+.strategy-badge{display:inline-block;margin:8px 0;padding:4px 8px;color:#a7c4eb;background:#182535;border-radius:3px;font-size:11px}.plan-policy-settings{margin:14px 0;padding:12px;border:1px solid #303747;color:#aab6c7}.plan-policy-settings label{display:flex;justify-content:space-between;align-items:center;margin:8px 0;font-size:12px}.plan-policy-settings input{width:100px;padding:6px;background:#131722;border:1px solid #363a45;color:#d1d4dc}.plan-policy-settings p,.research-scale-note{font-size:11px;line-height:1.7;color:#97a5b9}
+
+.research-candidate-grid.qualified-only .research-candidate[data-stage="watching"]{display:none}.plan-policy-stale{font-size:11px;color:#e2bc73}.plan-scale-audit{font-size:11px;color:#9eacc1;line-height:1.7}.plan-scale-audit>summary{cursor:pointer;padding:6px 0}
+
+/* Opportunity presentation preserves independent strategy records behind concise summaries. */
+.research-workbench .research-opportunity-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
+.research-workbench .research-opportunity{min-width:0;padding:16px;background:#151c27;border-top:2px solid #415b7c;border-radius:3px}
+.research-workbench .research-opportunity .research-card-title{gap:12px;align-items:flex-start;margin-bottom:9px}
+.research-workbench .research-opportunity .research-card-title>button{font-size:13px;text-align:left;color:#d0def0;line-height:1.6}
+.research-workbench .research-opportunity .research-card-title>span{white-space:nowrap;font-size:11px}
+.research-workbench .research-opportunity .is-bullish{color:#55bdac}.research-workbench .research-opportunity .is-bearish{color:#ef979c}
+.research-workbench .research-opportunity-aliases{margin:4px 0 10px;color:#8c9caf;font-size:10px;line-height:1.8}
+.research-workbench .research-opportunity-aliases span{display:inline-block;margin-left:7px;color:#a7bad0}
+.research-workbench .research-member-picker{display:flex;justify-content:space-between;gap:8px;align-items:center;margin:10px 0;color:#a7b8cd;font-size:11px}
+.research-workbench .research-member-picker select{min-width:0;max-width:75%;padding:5px;background:#101722;color:#c7d7eb;border:1px solid #344153;border-radius:3px;font-size:11px}
+.research-workbench .research-opportunity-prices{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:8px;padding:11px 0;border-top:1px solid #273344;border-bottom:1px solid #273344}
+.research-workbench .research-opportunity-prices button{display:flex;flex-direction:column;gap:6px;align-items:flex-start;min-width:0;padding:0;border:0;background:none;text-align:left}
+.research-workbench .research-opportunity-prices button span{font-size:10px;color:#8e9fb6}.research-workbench .research-opportunity-prices button strong{color:#d6e0ed;font-family:var(--mono,monospace);font-size:12px;overflow-wrap:anywhere}
+.research-workbench .research-opportunity-trigger{font-size:12px;color:#bccfe6;line-height:1.8;margin:12px 0 8px}
+.research-workbench .research-opportunity-meta,.research-workbench .research-plan-version{font-size:10px;color:#8e9fb4;line-height:1.8}
+.research-workbench .research-opportunity-details{margin:10px 0;color:#a3b4ca;font-size:11px;line-height:1.8}.research-workbench .research-opportunity-details>summary{cursor:pointer;padding:5px 0}
+.research-workbench .research-opportunity-member{padding:11px 0;border-top:1px solid #2a3444}.research-workbench .research-opportunity-member h4{margin:0 0 6px;font-size:12px}.research-workbench .research-opportunity-member p{font-size:11px;line-height:1.8}
+.research-workbench .research-selection{margin:10px 0}.research-workbench .research-selection>summary{cursor:pointer}.research-workbench .research-selection>div{margin-top:8px;padding:8px;background:#101722}.research-workbench .research-selection button{color:#91b6e4;text-align:left;font-size:11px;background:none;border:0;padding:0}.research-workbench .research-selection p{margin:6px 0}
+.research-workbench .research-opportunity-empty{padding:15px 16px;background:#151c27;color:#a9bdd4}.research-workbench .research-opportunity-empty strong{font-size:12px}.research-workbench .research-opportunity-empty p{font-size:11px;line-height:1.8;margin-bottom:0}
+.research-workbench .research-target>details{grid-column:1/-1;color:#91a0b5;font-size:10px}.research-workbench .research-target>details>summary{cursor:pointer}.research-workbench .research-target>details p{font-size:11px;line-height:1.7}
+@media(max-width:900px){.research-workbench .research-opportunity-grid{grid-template-columns:1fr}}
+@media(max-width:480px){.research-workbench .research-opportunity{padding:12px}.research-workbench .research-opportunity-prices{gap:6px}.research-workbench .research-opportunity-prices button strong{font-size:11px}.research-workbench .research-opportunity .research-card-title{flex-wrap:wrap}}
+
+.research-workbench .research-opportunity-note{font-size:11px;color:#8e9fb4;line-height:1.8}

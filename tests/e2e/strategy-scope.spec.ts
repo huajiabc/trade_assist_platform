@@ -1,0 +1,21 @@
+import {SAMPLE_CANDLES} from '../../shared/sample';
+import {test,expect} from './fixtures';
+import {frame,researchBundle,AS_OF} from '../research-fixtures';
+import {createMockAnalysis} from '../../shared/mock';
+import {prepareResearchRequest} from '../../server/workbench';
+import {localWorkbenchInterpretation} from '../../shared/workbenchAnalysis';
+test('strategy labels, structural scope defaults, editable thresholds and local re-evaluation need no paid calls',async({page})=>{
+ const marketRows=SAMPLE_CANDLES.slice(-80).map((b,i)=>({...b,timestamp:AS_OF-(80-i)*60}));
+ let analysisCalls=0,researchCalls=0;const requests:any[]=[];
+ await page.route('**/api/health',r=>r.fulfill({json:{configured:true,model:'fixture',provider:'codex',maxAnalysisCandles:300,activeProvider:'codex',providers:{codex:true,api:false},codex:{available:true,authenticated:true,message:'injected transport only'}}}));
+ await page.route('**/api/market/stream?*',r=>r.abort());
+ await page.route('**/api/market/candles?*',r=>{const tf=new URL(r.request().url()).searchParams.get('interval') as '1m';return r.fulfill({json:{provider:'binance',market:'usdt-perpetual',symbol:'SNDKUSDT',interval:tf,candles:marketRows,lastCandleClosed:true,serverTime:AS_OF*1000,fetchedAt:new Date(AS_OF*1000).toISOString(),warnings:[]}});});
+ await page.route('**/api/research/market?*',r=>r.fulfill({json:researchBundle()}));
+ await page.route('**/api/analyze',r=>{analysisCalls++;const body=r.request().postDataJSON();requests.push(body);const analysis=createMockAnalysis(body.candles);analysis.tradeSetups=analysis.tradeSetups.map(p=>({...p,strategyId:'range-reversal'}));return r.fulfill({json:{analysis,source:'ai',provider:'codex',billing:'chatgpt-plan',model:'injected-scope-fixture',planPolicy:body.planPolicy,analyzedBars:body.candles.length,generatedAt:new Date().toISOString()}});});
+ await page.route('**/api/research/analyze',r=>{researchCalls++;const c=prepareResearchRequest(r.request().postDataJSON()).context;return r.fulfill({json:{schemaVersion:'research-response-1.0',snapshotId:c.bundle.id,stateVersion:c.previous.version,source:'mock',provider:'mock',model:'injected',generatedAt:new Date().toISOString(),analysisAttempts:0,analysis:localWorkbenchInterpretation(c)}});});
+ await page.goto('/?live=SNDKUSDT&interval=1m');await expect(page.locator('.price-stat strong')).not.toHaveText('—');await expect(page.getByLabel('计划幅度偏好')).toHaveValue('structural');await page.getByLabel('分析来源',{exact:true}).selectOption('codex');await page.getByLabel('分析输入模式').selectOption('data');
+ await page.getByRole('button',{name:'模型与设置',exact:true}).click();await expect(page.getByLabel('最小保护幅度百分比')).toHaveValue('0.35');await expect(page.getByLabel('最小首目标幅度百分比')).toHaveValue('0.8');await page.getByLabel('最小首目标幅度百分比').fill('1.2');await page.keyboard.press('Escape');
+ await page.getByRole('button',{name:'分析当前 K 线范围',exact:true}).click();await expect.poll(()=>analysisCalls).toBe(1);expect(requests[0].planPolicy).toEqual({profile:'structural',minRiskPct:.35,minTargetPct:1.2});await page.getByRole('tab',{name:/潜在观察计划/}).click();await expect(page.locator('.trade-plan-card .strategy-badge').first()).toContainText('D · 震荡区间边缘反转');
+ const region=page.getByRole('region',{name:'多周期研究工作台'});await region.getByRole('button',{name:'开启多周期研究',exact:true}).click();await expect(region.locator('.research-candidate')).toHaveCount(12);await region.locator('.research-strategy-list>summary').click();await expect(region).toContainText('E · 失败突破与CHoCH反转');await expect(region).toContainText('F · 强位移与延续交易');
+ await page.getByLabel('计划幅度偏好').selectOption('micro');await expect(region.locator('.research-scale-note')).toContainText('局部短线');await expect(region.locator('.research-scale-note')).toContainText('0%');expect(analysisCalls).toBe(1);expect(researchCalls).toBe(0);await page.reload();await expect(page.getByLabel('计划幅度偏好')).toHaveValue('micro');
+});

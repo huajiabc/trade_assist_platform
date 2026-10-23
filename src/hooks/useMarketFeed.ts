@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LiveMarketQuery, MarketSnapshot } from '../../shared/liveMarket';
 import { mergeRealtimeKline, realtimeKlineSchema, streamStatusSchema, type FeedTransport, type RealtimeKline } from '../../shared/realtime';
-import { getMarketCandles } from '../services/market';
+import { getMarketCandles, MarketRequestError } from '../services/market';
 
 export interface ReceivedKline { event: RealtimeKline; receivedAt: number }
 const sameMarket = (snapshot: MarketSnapshot, query: LiveMarketQuery) => snapshot.symbol === query.symbol && snapshot.interval === query.interval;
@@ -25,6 +25,7 @@ export function useMarketFeed(onSnapshot: (snapshot: MarketSnapshot, reason: 'co
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [retryInitial, setRetryInitial] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [transport, setTransport] = useState<FeedTransport>('idle');
   const [lastEventTime, setLastEventTime] = useState(0);
@@ -63,7 +64,8 @@ export function useMarketFeed(onSnapshot: (snapshot: MarketSnapshot, reason: 'co
     const started = Date.now();
     restAttemptAt.current = started;
     setError('');
-    if (reason === 'connect') setLoading(true); else setRefreshing(true);
+    setRetryInitial(false);
+    if (reason === 'connect') { setLoading(true); updateTransport('connecting', '正在加载初始 K 线…'); } else setRefreshing(true);
     const timeout = window.setTimeout(() => controller.abort('timeout'), 15_000);
     try {
       const incoming = await getMarketCandles(nextQuery, controller.signal);
@@ -76,11 +78,16 @@ export function useMarketFeed(onSnapshot: (snapshot: MarketSnapshot, reason: 'co
       if (version !== requestVersion.current || session !== sessionVersion.current) return;
       if (controller.signal.reason === 'timeout') setError('行情请求超时，请检查服务端网络或 MARKET_PROXY_URL 后重试。');
       else if (!controller.signal.aborted) setError(e instanceof Error ? e.message : '行情加载失败，请重试。');
+      if (!snapshotRef.current && (!controller.signal.aborted || controller.signal.reason === 'timeout')) {
+        const retryable = controller.signal.reason === 'timeout' || (e instanceof MarketRequestError ? e.retryable : e instanceof TypeError);
+        setRetryInitial(retryable);
+        updateTransport(retryable ? 'fallback' : 'idle', retryable ? '初始行情连接失败，启用实时更新时每30秒自动重试；也可点击加载行情。' : '');
+      }
     } finally {
       window.clearTimeout(timeout);
       if (version === requestVersion.current && session === sessionVersion.current) { controllerRef.current = null; setLoading(false); setRefreshing(false); }
     }
-  }, []);
+  }, [updateTransport]);
 
   const connect = useCallback((nextQuery: LiveMarketQuery) => {
     sessionVersion.current++;
@@ -101,10 +108,22 @@ export function useMarketFeed(onSnapshot: (snapshot: MarketSnapshot, reason: 'co
     sourceRef.current?.close(); sourceRef.current = null;
     activeQuery.current = null; snapshotRef.current = null; latestTick.current = null;
     acceptedEventTime.current = 0; heartbeatAt.current = 0;
-    setQuery(null); setLoading(false); setRefreshing(false); setError('');
+    setQuery(null); setLoading(false); setRefreshing(false); setError(''); setRetryInitial(false);
     setLastEventTime(0); setLastReceivedAt(0);
     updateTransport('idle', '');
   }, [updateTransport]);
+
+  // The streaming monitor starts only after a valid snapshot. Initial failures
+  // need a separate bounded retry, without opening a stream or fabricating data.
+  useEffect(() => {
+    if (!retryInitial || query || loading || !autoRefresh || !activeQuery.current) return;
+    const pending = activeQuery.current, session = sessionVersion.current;
+    const timer = window.setInterval(() => {
+      if (session !== sessionVersion.current || !autoRefreshRef.current || snapshotRef.current || controllerRef.current || document.visibilityState !== 'visible') return;
+      void request(pending, 'connect');
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [retryInitial, query, loading, autoRefresh, request]);
 
   useEffect(() => {
     if (!query) return;

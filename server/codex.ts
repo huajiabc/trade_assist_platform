@@ -1,3 +1,4 @@
+import { chartImageBytes } from './chartImages';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
@@ -8,7 +9,7 @@ import { StringDecoder } from 'node:string_decoder';
 import type { CodexReasoningEffort, CodexServiceTier } from './config';
 import { MAX_ANALYSIS_CANDLES, validateCandles } from '../shared/market';
 import { invalidModelOutput, PublicError } from './errors';
-import { modelPayload, modelOutputSchema, modelSystemPrompt, type AnalysisProvider, type ModelInput } from './provider';
+import { modelPayload, modelOutputSchema, modelSystemPrompt, validateModelVisuals, type AnalysisProvider, type ModelInput } from './provider';
 
 export interface CodexStatus {
   available: boolean;
@@ -341,6 +342,7 @@ export class CodexAnalysisProvider implements AnalysisProvider, CodexProvider {
       throw new PublicError(400, 'CODEX_DATA_LIMIT', `Codex 单次最多分析 ${MAX_ANALYSIS_CANDLES} 根 K 线。`);
     }
     validateCandles(input.candles);
+    validateModelVisuals(input);
     if (this.busy) throw new PublicError(429, 'CODEX_BUSY', '已有 Codex 分析正在进行，请等待完成后再试。');
     if (signal?.aborted) throw new PublicError(499, 'ANALYSIS_CANCELLED', '本次 Codex 分析已取消。');
     this.busy = true;
@@ -353,6 +355,8 @@ export class CodexAnalysisProvider implements AnalysisProvider, CodexProvider {
       this.cachedStatus = { expires: this.now() + 15_000, value: login };
       if (!login.authenticated) throw new PublicError(503, 'CODEX_AUTH_REQUIRED', login.message);
       directory = await mkdtemp(path.join(tmpdir(), 'pa-smc-codex-'));
+      const imageFiles:string[]=[];
+      for(const [index,image] of (input.visuals??[]).entries()){const file=path.join(directory,'chart-'+index+'.png');await writeFile(file,chartImageBytes(image),{mode:0o600});imageFiles.push(file);}
       const schemaFile = path.join(directory, 'analysis.schema.json');
       const answerFile = path.join(directory, 'analysis.json');
       await writeFile(schemaFile, JSON.stringify(modelOutputSchema(input)), { encoding: 'utf8', mode: 0o600 });
@@ -380,6 +384,8 @@ export class CodexAnalysisProvider implements AnalysisProvider, CodexProvider {
       // Per-call overrides survive --ignore-user-config without changing global settings.
       if (this.config.reasoningEffort) args.push('--config', 'model_reasoning_effort=' + JSON.stringify(this.config.reasoningEffort));
       if (this.config.serviceTier) args.push('--config', 'service_tier=' + JSON.stringify(this.config.serviceTier), '--config', 'features.fast_mode=true');
+      for(const file of imageFiles)args.push('--image',file);
+      if(imageFiles.length)args.push('--');
       args.push('-');
       const prompt = JSON.stringify(modelPayload(input));
       const result = await this.run({

@@ -1,3 +1,5 @@
+import type { PlanPolicy } from '../../shared/planPolicy';
+import type { AnalysisInputMode, ChartImage } from '../../shared/analysisInput';
 import { z } from 'zod';
 import { validateAnalysisEnvelope, type AnalysisEnvelope } from '../../shared/analysis';
 import { MAX_ANALYSIS_CANDLES, type Candle } from '../../shared/market';
@@ -30,10 +32,10 @@ export async function getHealth(signal: AbortSignal): Promise<Health> {
   return healthSchema.parse(await readResponse(await fetch('/api/health', { signal })));
 }
 
-export async function requestAnalysis(candles: Candle[], context: AnalysisContext, mode: AnalysisMode, signal: AbortSignal, provider?: 'codex' | 'api'): Promise<AnalysisEnvelope> {
+export async function requestAnalysis(candles: Candle[], context: AnalysisContext, mode: AnalysisMode, signal: AbortSignal, provider?: 'codex' | 'api', visual?:{inputMode:AnalysisInputMode;images:ChartImage[]}, planPolicy?:PlanPolicy): Promise<AnalysisEnvelope> {
   const data = await readResponse(await fetch('/api/analyze', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ candles, context, mode, ...(provider ? { provider } : {}) }), signal,
+    body: JSON.stringify({ candles, context, mode, ...(provider ? { provider } : {}),...visual,...(planPolicy?{planPolicy}:{}) }), signal,
   }));
   const window = candles.slice(-MAX_ANALYSIS_CANDLES);
   return validateAnalysisEnvelope(data, window);

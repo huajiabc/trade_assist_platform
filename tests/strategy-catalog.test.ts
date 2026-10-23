@@ -3,8 +3,8 @@ import {evaluateStrategies,STRATEGY_CATALOG,validateStrategyPlan} from '../share
 import {AS_OF,researchBundle,strategyFacts} from './research-fixtures';
 import {auditStopRisk} from '../shared/tradeRisk';
 describe('fixed strategy catalog and structurally grounded plans',()=>{
- it('declares only A/B/C and yields an evidence-backed BOS retest candidate',()=>{
-  expect(STRATEGY_CATALOG.map(c=>c.id)).toEqual(['sweep-reclaim','bos-retest','trend-pullback']);
+ it('declares A–F and yields an evidence-backed BOS retest candidate',()=>{
+  expect(STRATEGY_CATALOG.map(c=>c.id)).toEqual(['sweep-reclaim','bos-retest','trend-pullback','range-reversal','failed-breakout','displacement-continuation']);
   const b=researchBundle(),facts=strategyFacts(),c=evaluateStrategies(b,facts).find(c=>c.strategyId==='bos-retest'&&c.direction==='bullish')!;
   expect(c.stage).toBe('conditional');expect(c.setup).not.toBeNull();expect(c.sourceByFrame['15m']).not.toEqual([]);expect(c.sourceByFrame['1m']).toContain('local-trigger');
   expect(validateStrategyPlan(c.setup!,c,b,facts)).toEqual(c.setup);expect(c.setup!.stopLoss).toBe(92.75);expect(c.setup!.targets[0].price).toBe(112);

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { setTimeout as wait } from 'node:timers/promises';
 import { LIVE_INTERVAL_SECONDS, validateMarketSnapshot, type LiveMarketQuery, type MarketSnapshot } from '../shared/liveMarket';
 import { MIN_CANDLES, type Candle } from '../shared/market';
 import { PublicError } from './errors';
@@ -97,9 +98,19 @@ export class BinanceMarketProvider implements MarketDataProvider {
       const url = new URL('/fapi/v1/klines', API_ORIGIN);
       url.search = new URLSearchParams({ symbol: query.symbol, interval: query.interval, limit: String(query.limit) }).toString();
       const options: RequestInit = { method: 'GET', signal: abort.signal, redirect: 'error', headers: { Accept: 'application/json' } };
+      // Public GETs only: retry one reset tunnel within the original request deadline.
+      const get = async (address: string) => {
+        try { return await this.fetchImpl(address, options); }
+        catch (error) {
+          const cause = error as { code?: string; cause?: { code?: string } };
+          if (abort.signal.aborted || !['ECONNRESET', 'EPIPE', 'UND_ERR_SOCKET'].includes(cause?.cause?.code ?? cause?.code ?? '')) throw error;
+          await wait(200, undefined, { signal: abort.signal });
+          return this.fetchImpl(address, options);
+        }
+      };
       const [rows, time] = await Promise.all([
-        this.fetchImpl(url.toString(), options).then(exchangeJson),
-        this.fetchImpl(`${API_ORIGIN}/fapi/v1/time`, options).then(exchangeJson),
+        get(url.toString()).then(exchangeJson),
+        get(API_ORIGIN + '/fapi/v1/time').then(exchangeJson),
       ]);
       const clock = z.object({ serverTime: z.number().int().positive() }).parse(time).serverTime;
       if (!Array.isArray(rows) || rows.length < MIN_CANDLES || rows.length > query.limit) throw invalidData();

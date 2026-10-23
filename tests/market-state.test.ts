@@ -9,6 +9,14 @@ function seeded():MarketState {
  state.facts=Object.fromEntries(facts.map(f=>[f.id,{current:true,versions:[{stateVersion:1,knownAt:AS_OF,reason:'受控合同',fact:f}]}]));state.scenarios=evaluateStrategies(state.bundle,facts);return state;
 }
 function saved(){const state=seeded(),c=state.scenarios.find(c=>c.stage==='conditional')!;return saveCandidatePlan(state,c.id);}
+const confirmedTriggerRows=()=>[{low:99.8,high:100.5,close:100.2},{low:100.1,high:100.8,close:100.4},{low:100.4,high:101.4,close:101.2}];
+function targetRevisionState(original=saved()):MarketState {
+ const facts=strategyFacts(),target={...facts[2],id:'new-target',low:116,high:116,knownAt:AS_OF+300,formedAt:AS_OF+300,confirmedAt:AS_OF+300};
+ const f=frame('1m');f.observedAt=AS_OF+300;for(let i=0;i<5;i++)f.candles.push({timestamp:AS_OF+i*60,open:100,close:100,high:101,low:99,volume:1});f.lastClosedTime=f.candles.at(-1)!.timestamp;
+ const five=frame('5m');five.observedAt=AS_OF+300;five.candles.push({...five.candles.at(-1)!,timestamp:AS_OF});five.lastClosedTime=AS_OF;
+ const bundle=makeResearchBundle(original.symbol,[frame('15m'),five,f],AS_OF+300),newFacts=[...facts.filter(f=>f.id!=='target'),target];newFacts.find(f=>f.id==='local-trigger')!.knownAt=AS_OF+240;
+ return {...original,asOf:bundle.asOf,bundle,version:original.version+1,snapshots:{...original.snapshots,...Object.fromEntries(RESEARCH_FRAMES.map(tf=>[bundle.frames[tf].id,bundle.frames[tf]]))},facts:{...Object.fromEntries(Object.entries(original.facts).map(([id,record])=>[id,{...record,current:false}])),...Object.fromEntries(newFacts.map(f=>[f.id,{current:true,versions:[{stateVersion:3,knownAt:bundle.asOf,reason:'新增结构',fact:f}]}]))},scenarios:evaluateStrategies(bundle,newFacts)};
+}
 function future(rows:{low:number;high:number;close:number}[]){const inputs=RESEARCH_FRAMES.map(tf=>frame(tf));const one=inputs.find(f=>f.timeframe==='1m')!;
  rows.forEach((r,i)=>one.candles.push({timestamp:AS_OF+i*60,open:r.close,volume:1,...r}));one.lastClosedTime=one.candles.at(-1)!.timestamp;inputs.forEach(f=>f.observedAt=AS_OF+rows.length*60);return makeResearchBundle('SNDKUSDT',inputs,AS_OF+rows.length*60);}
 describe('versioned market facts, interpretation and plan lifecycle',()=>{
@@ -40,9 +48,9 @@ describe('versioned market facts, interpretation and plan lifecycle',()=>{
  expect(reviewed.facts).toEqual(before);expect(reviewed.interpretation[0].snapshotId).toBe(s.bundle.id);expect(reviewed.needsReview.join()).toContain('审阅期间行情已更新');expect(reviewed.plans).toEqual([]);
  });
  it('tracks conditions and later reference targets while never promoting them into actual positions',()=>{
- const original=saved(),before=structuredClone(original),rows=[{low:99.8,high:100.5,close:100},{low:100.1,high:100.7,close:100.4},{low:100.4,high:113,close:111}];
+ const original=saved(),before=structuredClone(original),rows=[...confirmedTriggerRows(),{low:101.2,high:113,close:111}];
  const next=updateMarketState(original,future(rows));const p=next.plans[0];
- expect(p.tracking!.triggeredAt).toBe(AS_OF+60);expect(p.tracking!.targetTimes[0]).toBe(AS_OF+120);expect(p.status).toBe('targets-touched');expect(next.positions).toEqual([]);
+ expect(p.tracking!.triggeredAt).toBe(AS_OF+120);expect(p.tracking!.targetTimes[0]).toBe(AS_OF+180);expect(p.status).toBe('targets-touched');expect(next.positions).toEqual([]);
  expect(targetObservations(next,p)[0].status).toBe('reference-touched');expect(p.versions[0].targets[0].status).toBe('active');expect(original).toEqual(before);
  expect(next.events.some(e=>e.kind==='reference-target')).toBe(true);
  });
@@ -52,12 +60,12 @@ describe('versioned market facts, interpretation and plan lifecycle',()=>{
  expect(second.plans[0].status).toBe('invalidated');expect(second.plans[0].tracking!.triggeredAt).toBeNull();expect(second.positions).toEqual([]);
  });
  it('keeps same-bar stop/target ordering ambiguous rather than fabricating a profitable trade',()=>{
- const s=saved(),next=updateMarketState(s,future([{low:99.8,high:100.5,close:100},{low:100.1,high:100.7,close:100.4},{low:90,high:113,close:100}]));
+ const s=saved(),next=updateMarketState(s,future([...confirmedTriggerRows(),{low:90,high:113,close:100}]));
  expect(next.plans[0].tracking!.phase).toBe('ambiguous');expect(next.positions).toHaveLength(0);
  });
  it('retracts a derived target observation after OHLC revision and marks the plan for review',()=>{
-  const rows=[{low:99.8,high:100.5,close:100},{low:100.1,high:100.7,close:100.4},{low:100.4,high:113,close:111}],before=updateMarketState(saved(),future(rows));
-  const revised=structuredClone(rows);revised[2]={low:100.4,high:110,close:109};const next=updateMarketState(before,future(revised));
+  const rows=[...confirmedTriggerRows(),{low:101.2,high:113,close:111}],before=updateMarketState(saved(),future(rows));
+  const revised=structuredClone(rows);revised[3]={low:101.2,high:110,close:109};const next=updateMarketState(before,future(revised));
   expect(next.plans[0].tracking!.targetTimes[0]).toBeNull();expect(next.plans[0].status).toBe('needs-review');expect(next.events.some(e=>e.kind==='reference-event-retracted')).toBe(true);expect(next.events.some(e=>e.kind==='reference-target')).toBe(true);
   expect(next.plans[0].versions[0].setup.targets).toEqual(before.plans[0].versions[0].setup.targets);
  });
@@ -67,14 +75,50 @@ describe('versioned market facts, interpretation and plan lifecycle',()=>{
  expect(()=>acceptPlanUpdate(next,next.plans[0].id)).toThrow(/不能事后移动/);
  });
  it('preserves old TP/SL and binds an accepted structural revision to new evidence and effective time',()=>{
- const s=saved(),facts=strategyFacts(),old=structuredClone(s.plans[0].versions[0]);
- const target={...facts[2],id:'new-target',low:116,high:116,knownAt:AS_OF+300,formedAt:AS_OF+300,confirmedAt:AS_OF+300};
- const f=frame('1m');f.observedAt=AS_OF+300;for(let i=0;i<5;i++)f.candles.push({timestamp:AS_OF+i*60,open:100,close:100,high:101,low:99,volume:1});f.lastClosedTime=f.candles.at(-1)!.timestamp;
- const five=frame('5m');five.observedAt=AS_OF+300;five.candles.push({...five.candles.at(-1)!,timestamp:AS_OF});five.lastClosedTime=AS_OF;
- const b=makeResearchBundle(s.symbol,[frame('15m'),five,f],AS_OF+300),newFacts=[...facts.filter(f=>f.id!=='target'),target];newFacts.find(f=>f.id==='local-trigger')!.knownAt=AS_OF+240;
- const proposalState={...s,asOf:b.asOf,bundle:b,version:s.version+1,snapshots:{...s.snapshots,...Object.fromEntries(RESEARCH_FRAMES.map(tf=>[b.frames[tf].id,b.frames[tf]]))},facts:Object.fromEntries(newFacts.map(f=>[f.id,{current:true,versions:[{stateVersion:3,knownAt:b.asOf,reason:'新增结构',fact:f}]}])),scenarios:evaluateStrategies(b,newFacts)};
- expect(planUpdateProposal(proposalState,proposalState.plans[0])).not.toBeNull();const next=acceptPlanUpdate(proposalState,proposalState.plans[0].id);
+ const s=saved(),old=structuredClone(s.plans[0].versions[0]),proposalState=targetRevisionState(s);
+ expect(planUpdateProposal(proposalState,proposalState.plans[0])).not.toBeNull();
+ const held=recordActualPosition(proposalState,proposalState.plans[0].id,{entry:100,quantity:1,filledAt:AS_OF},(AS_OF+300)*1000);expect(planUpdateProposal(held,held.plans[0])).toBeNull();expect(()=>acceptPlanUpdate(held,held.plans[0].id)).toThrow(/不能事后移动/);
+ const immutableBefore=structuredClone(proposalState);const next=acceptPlanUpdate(proposalState,proposalState.plans[0].id);
+ expect(proposalState).toEqual(immutableBefore);expect(next.plans[0].targetReview).toEqual([]);
  expect(next.plans[0].versions).toHaveLength(2);expect(next.plans[0].versions[0]).toEqual(old);expect(next.plans[0].versions[1].targets[0].structureId).toBe('new-target');expect(next.plans[0].versions[1].effectiveAt).toBe(AS_OF+300);
+ });
+ it('does not reinterpret a newly ranked primary as a revision of a saved plan',()=>{
+ const proposal=targetRevisionState(),before=structuredClone(proposal.plans),oldPrimary=currentFacts(proposal).find(f=>f.id==='five-break')!;
+ const unrelated={...oldPrimary,id:'another-five-break',rawId:'another-five-break',familyId:oldPrimary.familyId};
+ const facts=currentFacts(proposal).filter(f=>f.id!==oldPrimary.id).concat(unrelated);
+ proposal.facts={...proposal.facts,'five-break':{...proposal.facts['five-break'],current:false},[unrelated.id]:{current:true,versions:[{stateVersion:proposal.version,knownAt:proposal.asOf,reason:'独立新BOS',fact:unrelated}]}};
+ proposal.scenarios=evaluateStrategies(proposal.bundle,facts);
+ expect(proposal.scenarios.find(c=>c.strategyId==='bos-retest'&&c.direction==='bullish')?.setup).toBeTruthy();
+ expect(planUpdateProposal(proposal,proposal.plans[0])).toBeNull();expect(()=>acceptPlanUpdate(proposal,proposal.plans[0].id)).toThrow(/不能事后移动/);
+ expect(proposal.plans).toEqual(before);
+ });
+ it('matches legacy plan revisions by exact originating 5m evidence without inventing metadata',()=>{
+ const proposal=targetRevisionState(),plan=proposal.plans[0];delete plan.versions[0].candidate.primaryFactId;
+ const before=structuredClone(plan),candidate=planUpdateProposal(proposal,plan);expect(candidate?.primaryFactId).toBe('five-break');
+ expect(plan).toEqual(before);expect(plan.versions[0].candidate.primaryFactId).toBeUndefined();
+ const revised=acceptPlanUpdate(proposal,plan.id);expect(revised.plans[0].versions[0]).toEqual(before.versions[0]);expect(revised.plans[0].versions[1].candidate.primaryFactId).toBe('five-break');
+ });
+ it('does not infer a legacy opportunity from shared protection, background or event groups',()=>{
+ const proposal=targetRevisionState(),candidate=proposal.plans[0].versions[0].candidate;delete candidate.primaryFactId;
+ candidate.sourceByFrame['5m']=candidate.sourceByFrame['5m'].filter(id=>id!=='five-break');
+ candidate.checks=candidate.checks.map(c=>({...c,evidenceIds:c.evidenceIds.filter(id=>id!=='five-break')}));
+ expect(planUpdateProposal(proposal,proposal.plans[0])).toBeNull();
+ });
+ it('clears previous-version target observations only after accepting a same-origin revision',()=>{
+ const proposal=targetRevisionState(),plan=proposal.plans[0];plan.targetReview=plan.versions[0].targets.map(t=>({...t,status:'needs-review',reason:'旧版本目标待复核'}));
+ const before=structuredClone(plan),next=acceptPlanUpdate(proposal,plan.id);
+ expect(next.plans[0].targetReview).toEqual([]);expect(targetObservations(next,next.plans[0])[0].structureId).toBe('new-target');expect(proposal.plans[0]).toEqual(before);expect(next.plans[0].versions[0]).toEqual(before.versions[0]);
+ });
+ it('keeps the captured catalog and marks same-snapshot asynchronous context changes stale',()=>{
+ const original=seeded(),context=modelContext(original),value=localWorkbenchInterpretation(context);
+ expect(context.catalogVersion).toBe(original.catalogVersion);
+ for(const changed of [{...original,version:original.version+1},{...original,catalogVersion:'catalog-future'},{...original,planPolicy:{...original.planPolicy!,minTargetPct:1.2}}]){
+  const before=structuredClone(changed),reviewed=acceptInterpretation(changed,context,value,'fixture','ai');
+  expect(reviewed.needsReview.join()).toContain('审阅期间行情已更新');expect(reviewed.interpretation.at(-1)?.staleReason).toContain('原上下文');expect(reviewed.interpretation.at(-1)?.catalogVersion).toBe(context.catalogVersion);expect(reviewed.interpretation.at(-1)?.basedOnVersion).toBe(context.previous.version);expect(changed).toEqual(before);
+ }
+ const fresh=acceptInterpretation(original,context,value,'fixture','ai');expect(fresh.interpretation.at(-1)?.staleReason).toBeNull();
+ const legacyContext={...context};delete legacyContext.catalogVersion;
+ const legacy=acceptInterpretation(original,legacyContext,value,'fixture','ai');expect(legacy.interpretation.at(-1)?.catalogVersion).toBeUndefined();expect(legacy.needsReview.join()).toContain('审阅期间行情已更新');
  });
  it('requires explicit, valid user fill information and keeps it distinct in export/model context',()=>{
  const s=saved();expect(()=>recordActualPosition(s,s.plans[0].id,{entry:100,quantity:0,filledAt:AS_OF})).toThrow();

@@ -44,6 +44,7 @@ export function LiveMarketControls(props: Props) {
     </form>
     {props.snapshot && <div className={`live-market-status ${error || props.transport === 'fallback' ? 'market-stale' : ''}`}><span className="status-dot"/><span>{error ? '更新失败 · 保留上次真实数据' : !props.autoRefresh ? '实时更新已暂停' : props.transport === 'streaming' ? 'WebSocket 实时连接' : props.transport === 'fallback' ? '推送重连中 · 轮询回退' : props.refreshing ? '正在同步行情' : '实时流连接中'}<span> · </span>{props.snapshot.symbol}<span> · </span>{props.snapshot.symbol === 'SNDKUSDT' ? 'Sandisk 股票永续' : 'USDT 永续'}<span> · </span>末根{props.snapshot.lastCandleClosed ? '已收盘' : '未收盘（分析时排除）'}</span><time>{props.transport === 'streaming' && props.lastEventTime ? `行情时间 ${new Date(props.lastEventTime).toISOString().slice(11, 19)}` : `获取于 ${new Date(props.snapshot.fetchedAt).toISOString().slice(11, 19)}`} UTC</time></div>}
     {props.snapshot && props.transport === 'fallback' && !error && <p className="stream-fallback-note">{props.streamMessage || '实时推送暂时中断，已启用 30 秒轮询，连接恢复后自动切回推送。'}</p>}
+    {!props.snapshot && props.autoRefresh && props.transport === 'fallback' && props.streamMessage && <p className="stream-fallback-note">{props.streamMessage}</p>}
     {error && <div className="live-market-error" role="alert"><WarningCircle size={16}/>{error}</div>}
   </section>;
 }

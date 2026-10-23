@@ -1,13 +1,32 @@
 import {describe,it,expect} from 'vitest';
-import {localWorkbenchInterpretation,validateWorkbenchInterpretation,workbenchPayload,workbenchJsonSchema} from '../shared/workbenchAnalysis';
+import {localWorkbenchInterpretation,validateWorkbenchInterpretation,workbenchPayload,workbenchJsonSchema,workbenchReferences} from '../shared/workbenchAnalysis';
 import {currentFacts,modelContext,updateMarketState} from '../shared/marketState';
 import {evaluateStrategies} from '../shared/strategyCatalog';
 import {researchBundle,strategyFacts} from './research-fixtures';
 function context(){const state=updateMarketState(null,researchBundle()),facts=strategyFacts();state.facts=Object.fromEntries(facts.map(f=>[f.id,{current:true,versions:[{stateVersion:1,knownAt:state.asOf,reason:'测试',fact:f}]}]));state.scenarios=evaluateStrategies(state.bundle,facts);return modelContext(state);}
 describe('bounded state-aware AI interpretation contract',()=>{
  it('keeps per-frame OHLCV, roles, prior state, catalog and evidence distinct',()=>{
- const c=context(),payload=workbenchPayload(c);expect(payload.bundle).toEqual(c.bundle);expect(payload.previous).toEqual(c.previous);expect(payload.catalog).toHaveLength(3);
+ const c=context(),payload=workbenchPayload(c);expect(payload.bundle).toEqual(c.bundle);expect(payload.previous).toEqual(c.previous);expect(payload.catalog).toHaveLength(6);
  expect(payload).not.toHaveProperty('tradeSetups');expect(payload.facts.every(f=>f.source==='deterministic')).toBe(true);expect(workbenchJsonSchema).toHaveProperty('properties.strategyReviews');
+ });
+ it('keeps selected plan references beyond the ordinary 48-per-frame context budget',()=>{
+ const c=context(),template=c.candidates.find(candidate=>candidate.setup&&candidate.stage==='conditional')!,base=c.facts.find(f=>f.id==='five-protect')!;
+ const ordinary=Array.from({length:80},(_,i)=>({...base,id:'ordinary-five-'+i,rawId:'ordinary-five-'+i}));c.facts.push(...ordinary);
+ expect(workbenchReferences(c).filter(f=>f.timeframe==='5m')).toHaveLength(48);
+ // Stress the aggregate selected-plan reference budget while keeping each setup bounded.
+ const mandatory=Array.from({length:60},(_,i)=>({...base,id:'selected-five-'+i,rawId:'selected-five-'+i}));c.facts.push(...mandatory);
+ c.candidates=c.candidates.map((candidate,i)=>({...template,id:candidate.id,strategyId:candidate.strategyId,direction:candidate.direction,setup:{...template.setup!,id:candidate.id+'-plan',structureIds:[...template.setup!.structureIds,...mandatory.slice(i*5,i*5+5).map(f=>f.id)]}}));
+ const before=structuredClone(c),references=workbenchReferences(c),required=new Set(c.candidates.flatMap(candidate=>candidate.setup!.structureIds)),fiveRequired=c.facts.filter(f=>f.timeframe==='5m'&&required.has(f.id));
+ expect(fiveRequired.length).toBeGreaterThan(48);expect(references.filter(f=>f.timeframe==='5m')).toHaveLength(fiveRequired.length);
+ expect(fiveRequired.every(f=>references.some(reference=>reference.id===f.id))).toBe(true);expect(references.some(f=>f.id.startsWith('ordinary-five-'))).toBe(false);
+ expect(c).toEqual(before);expect(references.find(f=>f.id==='selected-five-59')).toEqual(mandatory[59]);
+ });
+ it('caps only model-facing alternative details and preserves the full local candidate selection',()=>{
+ const c=context(),candidate=c.candidates.find(candidate=>candidate.setup)!,alternatives=Array.from({length:7},(_,i)=>({primaryFactId:'comparison-'+i,localFactId:null,stage:'watching' as const,score:i,reason:'受控候选比较',entry:null,stopLoss:null,target:null}));
+ candidate.selection={considered:7,eligible:0,selectedPrimaryId:candidate.primaryFactId??null,reason:'本地保留全部比较记录',alternatives};
+ const before=structuredClone(c),payload=workbenchPayload(c),sent=payload.candidates.find(row=>row.id===candidate.id)!;
+ expect(sent.selection?.alternatives).toEqual(alternatives.slice(0,3));expect(sent.selection).toHaveProperty('omittedAlternatives',4);expect(payload.catalogVersion).toBe(c.catalogVersion);
+ expect(candidate.selection.alternatives).toHaveLength(7);expect(candidate.selection).not.toHaveProperty('omittedAlternatives');expect(c).toEqual(before);
  });
  it('accepts an evidence-backed retain and rejects unknown IDs, duplicate reviews and cross-frame substitution',()=>{
  const c=context(),a=localWorkbenchInterpretation(c),candidate=c.candidates.find(c=>c.stage==='conditional')!;

@@ -1,3 +1,4 @@
+import { extractResearchPatterns } from './researchPatterns';
 import { z } from 'zod';
 import { validateCandleRows, type Candle } from './market';
 import { closedMarketCandles, type MarketSnapshot } from './liveMarket';
@@ -74,6 +75,7 @@ export interface ResearchFact {
   id:string; rawId:string; timeframe:ResearchFrame; type:string; direction:'bullish'|'bearish'|'neutral'; low:number; high:number;
   originTime:number; formedAt:number; confirmedAt:number|null; knownAt:number; resolvedAt:number|null;
   status:'candidate'|'confirmed'|'resolved'; importance:'major'|'local'; familyId:string; source:'deterministic';
+  relatedIds?:string[];breakoutTime?:number;failureTime?:number;volumeRatio?:number;displacementAtr?:number;zoneLow?:number;zoneHigh?:number;
   rationale:string; invalidation:string; evidenceTimes:number[]; reclaimTime:number|null; reactionTime:number|null; tests:number;
 }
 export const factId=(tf:ResearchFrame,id:string)=>'tf-'+tf+'-'+id;
@@ -102,11 +104,13 @@ export function extractFrameFacts(frame:FrameSnapshot):ResearchFact[] {
         broken=p.side==='high'?b.close>p.price:b.close<p.price;
       }
     }
-    return facts;
+    return [...facts,...extractResearchPatterns(frame,candles,facts)];
   }).filter(f=>f.knownAt<=frame.observedAt);
 }
 export function frameRegime(facts:ResearchFact[]):'uptrend'|'downtrend'|'range'|'transition' {
   const breaks=facts.filter(f=>['BOS','CHoCH'].includes(f.type)&&f.confirmedAt!==null).sort((a,b)=>a.knownAt-b.knownAt);
-  const major=breaks.filter(f=>f.importance==='major'),last=(major.length?major:breaks).at(-1);
-  return !last?'range':last.status==='resolved'||last.type==='CHoCH'?'transition':last.direction==='bullish'?'uptrend':'downtrend';
+  const activeRange=[...facts].filter(f=>f.type==='trading-range'&&f.status==='confirmed').sort((a,b)=>b.knownAt-a.knownAt)[0];
+ const major=breaks.filter(f=>f.importance==='major'),last=(major.length?major:breaks).at(-1);
+  if(activeRange&&(!last||activeRange.knownAt>last.knownAt))return 'range';
+ return !last?'range':last.status==='resolved'||last.type==='CHoCH'?'transition':last.direction==='bullish'?'uptrend':'downtrend';
 }

@@ -1,3 +1,5 @@
+import { resolvePlanPolicy, MICRO_PLAN_POLICY, samePlanPolicy, type PlanPolicy } from './planPolicy';
+import { STRATEGY_CATALOG_VERSION } from './strategyCatalog';
 import type { Candle } from './market';
 import type { TradeSetup } from './analysis';
 import { evaluateTradePlan, type PlanTrackingResult } from './tradeTracking';
@@ -11,9 +13,9 @@ export interface PlanVersion {version:number;effectiveAt:number;reason:string;ev
 export interface ManagedPlan {id:string;strategyId:StrategyCandidate['strategyId'];scenarioId:string;source:'rule-candidate'|'ai-reviewed';versions:PlanVersion[];tracking:PlanTrackingResult|null;status:string;needsReview:boolean;reviewReasons:string[];targetReview:TargetRecord[]}
 export interface ManualPosition {id:string;planId:string;direction:'bullish'|'bearish';entry:number;quantity:number;filledAt:number;recordedAt:number;source:'user-confirmed';status:'open'|'closed';review:string[]}
 export interface MarketState {
- schemaVersion:'market-state-1.0';symbol:string;sessionId:string;version:number;updatedAt:number;asOf:number;bundle:ResearchBundle;
+ planPolicy?:PlanPolicy;catalogVersion?:string;schemaVersion:'market-state-1.0';symbol:string;sessionId:string;version:number;updatedAt:number;asOf:number;bundle:ResearchBundle;
  facts:Record<string,{current:boolean;versions:{stateVersion:number;knownAt:number;reason:string;fact:ResearchFact}[]}>;
- interpretation:{basedOnVersion:number;snapshotId:string;source:'ai'|'mock';model:string;updatedAt:number;value:WorkbenchInterpretation}[];
+ interpretation:{planPolicy?:PlanPolicy;catalogVersion?:string;staleReason?:string|null;basedOnVersion:number;snapshotId:string;source:'ai'|'mock';model:string;updatedAt:number;value:WorkbenchInterpretation}[];
  scenarios:StrategyCandidate[];plans:ManagedPlan[];positions:ManualPosition[];events:MarketEvent[];snapshots:Record<string,FrameSnapshot>;
  history:{version:number;asOf:number;updatedAt:number;reason:string;bundleId:string;frameIds:Record<ResearchFrame,string>}[];
  evaluations:{stateVersion:number;asOf:number;bundleId:string;candidates:StrategyCandidate[]}[];needsReview:string[];capacityReached:boolean;
@@ -21,19 +23,23 @@ export interface MarketState {
 const frameIds=(b:ResearchBundle)=>Object.fromEntries(RESEARCH_FRAMES.map(tf=>[tf,b.frames[tf].id])) as Record<ResearchFrame,string>;
 const equal=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);
 export function currentFacts(state:MarketState):ResearchFact[]{return Object.values(state.facts).filter(f=>f.current).map(f=>f.versions.at(-1)!.fact);}
-export function modelContext(state:MarketState):WorkbenchModelContext {return {bundle:state.bundle,facts:currentFacts(state),candidates:state.scenarios,previous:{version:state.version,interpretation:state.interpretation.at(-1)?.value??null,changes:state.events.slice(-20).map(e=>e.reason),plans:state.plans.slice(-20).map(p=>({id:p.id,status:p.status,version:p.versions.at(-1)!.version,setup:p.versions.at(-1)!.setup,reviewReasons:p.reviewReasons})),positions:state.positions.filter(p=>p.status==='open').slice(-20).map(p=>({id:p.id,planId:p.planId,direction:p.direction,entry:p.entry,quantity:p.quantity,filledAt:p.filledAt,source:p.source,review:p.review}))}};}
+export function modelContext(state:MarketState):WorkbenchModelContext {return {catalogVersion:state.catalogVersion,planPolicy:state.planPolicy??MICRO_PLAN_POLICY,bundle:state.bundle,facts:currentFacts(state),candidates:state.scenarios,previous:{version:state.version,interpretation:state.interpretation.at(-1)?.value??null,changes:state.events.slice(-20).map(e=>e.reason),plans:state.plans.slice(-20).map(p=>({id:p.id,status:p.status,version:p.versions.at(-1)!.version,setup:p.versions.at(-1)!.setup,reviewReasons:p.reviewReasons})),positions:state.positions.filter(p=>p.status==='open').slice(-20).map(p=>({id:p.id,planId:p.planId,direction:p.direction,entry:p.entry,quantity:p.quantity,filledAt:p.filledAt,source:p.source,review:p.review}))}};}
 function event(state:MarketState,kind:string,reason:string,factIds:string[]=[],planId:string|null=null,knownAt=state.asOf,key=''){
  const id='event-'+contentId([state.sessionId,kind,factIds,planId,knownAt,key]);if(state.events.some(e=>e.id===id))return;
  state.events.push({id,kind,reason,factIds,planId,knownAt,stateVersion:state.version,snapshotId:state.bundle.id});
 }
 function recordHistory(state:MarketState,reason:string){state.history.push({version:state.version,asOf:state.asOf,updatedAt:state.updatedAt,reason,bundleId:state.bundle.id,frameIds:frameIds(state.bundle)});}
-export function updateMarketState(previous:MarketState|null,bundle:ResearchBundle,reason='已收盘行情本地更新',now=Date.now()):MarketState {
+export function updateMarketState(previous:MarketState|null,bundle:ResearchBundle,reason='已收盘行情本地更新',now=Date.now(),requestedPolicy?:PlanPolicy):MarketState {
+ const policy=resolvePlanPolicy(requestedPolicy??previous?.planPolicy);
+ const policyChanged=!!previous&&!samePlanPolicy(previous.planPolicy,policy),catalogChanged=!!previous&&previous.catalogVersion!==STRATEGY_CATALOG_VERSION;
  if(previous&&previous.symbol!==bundle.symbol)throw new Error('不能将不同标的继承到同一市场状态。');
- if(previous?.bundle.id===bundle.id)return previous;
+ if(previous?.bundle.id===bundle.id&&!policyChanged&&!catalogChanged)return previous;
  if(previous?.capacityReached)return previous;
  if(previous&&(Object.keys(previous.snapshots).length>=96||previous.events.length>=8000||previous.history.length>=300))return {...previous,capacityReached:true,needsReview:[...new Set([...previous.needsReview,'达到本地会话容量上限，请导出后开始新会话；没有静默删除历史。'])]};
  const next:MarketState=previous?{...previous,version:previous.version+1,updatedAt:now,asOf:bundle.asOf,bundle,facts:{...previous.facts},plans:previous.plans.map(p=>({...p,versions:[...p.versions],reviewReasons:[...p.reviewReasons]})),positions:previous.positions.map(p=>({...p,review:[...p.review]})),events:[...previous.events],snapshots:{...previous.snapshots},history:[...previous.history],evaluations:[...previous.evaluations],needsReview:[]}:
   {schemaVersion:'market-state-1.0',symbol:bundle.symbol,sessionId:'session-'+contentId([bundle.symbol,now]),version:1,updatedAt:now,asOf:bundle.asOf,bundle,facts:{},interpretation:[],scenarios:[],plans:[],positions:[],events:[],snapshots:{},history:[],evaluations:[],needsReview:[],capacityReached:false};
+ next.planPolicy=policy;next.catalogVersion=STRATEGY_CATALOG_VERSION;
+ if(policyChanged||catalogChanged){const message=policyChanged?'计划幅度偏好调整；旧计划保留原价，需按新偏好重新审阅':'策略目录升级；旧解释待重新审阅';next.needsReview.push(message);event(next,policyChanged?'plan-policy-changed':'strategy-catalog-updated',message);}
  if(previous&&bundle.asOf<previous.asOf)throw new Error('旧快照不能回滚当前市场状态；请作为独立历史会话载入。');
  for(const tf of RESEARCH_FRAMES){const frame=bundle.frames[tf];next.snapshots[frame.id]=frame;
   if(!frame.integrity.usable)next.needsReview.push(tf+'：'+frame.integrity.reasons.join('；'));
@@ -54,7 +60,7 @@ export function updateMarketState(previous:MarketState|null,bundle:ResearchBundl
    event(next,kind,fact.timeframe+' '+fact.type+' '+(!last?'新增事实':kind==='fact-resolved'?'首次回补/失效':'证据状态更新'),[fact.id],null,Math.min(bundle.asOf,knownAt));
   }else next.facts[fact.id]={...record,current:true};
  }
- next.scenarios=evaluateStrategies(bundle,facts);
+ next.scenarios=evaluateStrategies(bundle,facts,policy);
  for(const c of next.scenarios){const old=previous?.scenarios.find(p=>p.id===c.id);if(!old||old.stage!==c.stage)event(next,'scenario-'+(bundle.asOf>=c.expiresAt?'expired':c.stage==='conditional'?'eligible':'watching'),c.strategyId+' '+c.direction+' '+(bundle.asOf>=c.expiresAt?'已过期':c.stage==='conditional'?'规则门槛通过，仍为研究候选':'仍有条件未成立'),c.supportIds);}
  for(const c of previous?.scenarios??[])if(!next.scenarios.some(n=>n.id===c.id))event(next,'scenario-superseded','旧情景由新的结构或触发上下文替代，未无限续期',c.supportIds);
 
@@ -119,9 +125,22 @@ export function saveCandidatePlan(state:MarketState,candidateId:string,reason='�
  next.plans.push({id,strategyId:candidate.strategyId,scenarioId:candidate.scenarioId,source,versions:[{version:1,effectiveAt:state.asOf,reason,eventIds:state.events.filter(e=>e.stateVersion===state.version).map(e=>e.id),snapshotIds:frameIds(state.bundle),setup:candidate.setup,targets,candidate}],tracking:null,status:'waiting',needsReview:false,reviewReasons:[],targetReview:[]});
  event(next,'plan-created',reason,candidate.supportIds,id);recordHistory(next,reason);return next;
 }
+/** A new ranking winner is not a revision of a saved opportunity. Legacy candidates
+ * identify their origin by the exact 5m opportunity fact, never by shared trend,
+ * protection, a later 1m confirmation or a broad correlated-event family. */
+function originatingOpportunityId(state:MarketState,candidate:StrategyCandidate):string|null {
+ if(candidate.primaryFactId)return candidate.primaryFactId;
+ const types:Record<StrategyCandidate['strategyId'],string[]>={
+  'sweep-reclaim':['sweep'],'bos-retest':['BOS'],'trend-pullback':['FVG','OB'],
+  'range-reversal':['sweep','failed-breakout'],'failed-breakout':['failed-breakout'],'displacement-continuation':['displacement'],
+ };
+ const references=[...candidate.sourceByFrame['5m'],...candidate.checks.filter(c=>c.key==='structure').flatMap(c=>c.evidenceIds)];
+ return references.find(id=>{const fact=state.facts[id]?.versions.at(-1)?.fact;return fact?.timeframe==='5m'&&types[candidate.strategyId].includes(fact.type);})??null;
+}
 export function planUpdateProposal(state:MarketState,plan:ManagedPlan):StrategyCandidate|null {
- if(!['waiting','needs-review'].includes(plan.status))return null;
- const old=plan.versions.at(-1)!,c=state.scenarios.find(c=>c.strategyId===plan.strategyId&&c.direction===old.setup.direction&&c.setup&&c.stage==='conditional');
+ if(!['waiting','needs-review'].includes(plan.status)||state.positions.some(p=>p.planId===plan.id&&p.status==='open'))return null;
+ const old=plan.versions.at(-1)!,origin=originatingOpportunityId(state,old.candidate);
+ const c=origin?state.scenarios.find(c=>c.strategyId===plan.strategyId&&c.direction===old.setup.direction&&c.setup&&c.stage==='conditional'&&originatingOpportunityId(state,c)===origin):undefined;
  if(!c?.setup||state.needsReview.some(r=>/修订|缺口/.test(r)))return null;
  const geometry=(s:TradeSetup)=>[s.entry,s.stopLoss,s.targets,s.basis?.stopStructureId,s.basis?.targetStructureIds];
  if(equal(geometry(old.setup),geometry(c.setup)))return null;
@@ -133,12 +152,13 @@ export function acceptPlanUpdate(state:MarketState,planId:string):MarketState {
  const plan=state.plans.find(p=>p.id===planId);if(!plan)throw new Error('计划不存在。');const c=planUpdateProposal(state,plan);if(!c?.setup)throw new Error('没有由新结构支持的可接受更新，不能事后移动目标。');
  validateStrategyPlan(c.setup,c,state.bundle,currentFacts(state));
  const temporary=saveCandidatePlan({...state,plans:[]},c.id),fresh=temporary.plans[0].versions[0],reason='用户接受新结构支持的计划更新；旧版本完整保留';
- const next={...state,version:state.version+1,updatedAt:Date.now(),plans:state.plans.map(p=>p.id===planId?{...p,versions:[...p.versions,{...fresh,version:p.versions.length+1,reason}],tracking:null,status:'waiting',needsReview:false,reviewReasons:[]}:p),events:[...state.events],history:[...state.history]};
+ const next={...state,version:state.version+1,updatedAt:Date.now(),plans:state.plans.map(p=>p.id===planId?{...p,versions:[...p.versions,{...fresh,version:p.versions.length+1,reason}],tracking:null,status:'waiting',needsReview:false,reviewReasons:[],targetReview:[]}:p),events:[...state.events],history:[...state.history]};
  event(next,'plan-revision',reason,c.supportIds,planId);recordHistory(next,reason);return next;
 }
 export function acceptInterpretation(state:MarketState,inputContext:WorkbenchModelContext,value:WorkbenchInterpretation,model:string,source:'ai'|'mock'):MarketState {
- const next={...state,version:state.version+1,updatedAt:Date.now(),interpretation:[...state.interpretation,{basedOnVersion:inputContext.previous.version,snapshotId:inputContext.bundle.id,source,model,updatedAt:Date.now(),value}],events:[...state.events],history:[...state.history],needsReview:[...state.needsReview]};
- if(state.bundle.id!==inputContext.bundle.id)next.needsReview.push('AI审阅期间行情已更新，结果仅属于原快照；未自动采用旧计划');
+ const staleReason=state.bundle.id!==inputContext.bundle.id||!samePlanPolicy(state.planPolicy,inputContext.planPolicy)||state.catalogVersion!==inputContext.catalogVersion||state.version!==inputContext.previous.version?'AI审阅期间行情已更新，或幅度偏好、策略目录与研究上下文发生变化；结果仅属于原快照和原上下文，未自动采用旧计划':null;
+ const next={...state,version:state.version+1,updatedAt:Date.now(),interpretation:[...state.interpretation,{planPolicy:inputContext.planPolicy??MICRO_PLAN_POLICY,catalogVersion:inputContext.catalogVersion,staleReason,basedOnVersion:inputContext.previous.version,snapshotId:inputContext.bundle.id,source,model,updatedAt:Date.now(),value}],events:[...state.events],history:[...state.history],needsReview:[...state.needsReview]};
+ if(staleReason)next.needsReview.push(staleReason);
  event(next,'interpretation-updated',source==='ai'?'AI解释已保存，未改写规则事实':'保存本地未审阅状态',[],null,inputContext.bundle.asOf);recordHistory(next,'保存解释版本');return next;
 }
 export function recordActualPosition(state:MarketState,planId:string,fill:{entry:number;quantity:number;filledAt:number},now=Date.now()):MarketState {

@@ -1,3 +1,6 @@
+import { planPolicySchema } from '../shared/planPolicy';
+import { visualRequestFields, validateImageAnchors } from '../shared/analysisInput';
+import { chartImageBytes } from './chartImages';
 import { createResearchRouter } from './workbench';
 import express, { type ErrorRequestHandler } from 'express';
 import path from 'node:path';
@@ -17,6 +20,8 @@ import { CodexAnalysisProvider, type CodexProvider } from './codex';
 import { analyzeWithValidation } from './analysisService';
 
 const requestSchema = z.object({
+  ...visualRequestFields,
+  planPolicy:planPolicySchema.optional(),
   candles: z.array(z.object({
     timestamp: z.number().finite(),
     open: z.number().finite(),
@@ -126,6 +131,7 @@ export function createApp(options: AppOptions = {}) {
       throw new PublicError(400, 'CANDLES_INVALID', '行情数据无效：请检查数值、OHLC 关系、缺失值及严格递增的 UTC 时间。');
     }
     const window = candles.slice(-MAX_ANALYSIS_CANDLES);
+    try{validateImageAnchors(parsed.data.inputMode??'data',parsed.data.images??[],[{symbol:parsed.data.context.symbol,timeframe:parsed.data.context.timeframe,candles:window}]);for(const image of parsed.data.images??[])chartImageBytes(image);}catch{throw new PublicError(400,'CHART_IMAGE_INVALID','图表截图与行情快照不一致或PNG格式无效，请重新生成。');}
     let selected = parsed.data.provider ?? config.analysisProvider;
     if (parsed.data.mode === 'mock') selected = 'mock';
     if (selected === 'auto') {
@@ -143,12 +149,13 @@ export function createApp(options: AppOptions = {}) {
     let model = real ? config.model : 'mock-pa-smc-v1';
     let usage: AnalysisEnvelope['usage'];
     let analysisAttempts: AnalysisEnvelope['analysisAttempts'];
+    let diagnostics: AnalysisEnvelope['diagnostics'];
     const controller = new AbortController();
     const onClose = () => { if (!response.writableEnded) controller.abort(); };
     response.once('close', onClose);
     if (selected === 'codex') codexBusy = true;
     try {
-      const input = { candles: window, context: parsed.data.context, signal: controller.signal };
+      const input = { candles: window, context: parsed.data.context, visuals:parsed.data.images, planPolicy:parsed.data.planPolicy, signal: controller.signal };
       if (real) {
         const result = await analyzeWithValidation(input, async fixedInput => selected === 'codex'
           ? codex.analyzeDetailed(fixedInput, fixedInput.signal)
@@ -160,6 +167,7 @@ export function createApp(options: AppOptions = {}) {
         model = result.model;
         usage = result.usage;
         analysisAttempts = result.analysisAttempts;
+        diagnostics = result.diagnostics;
       } else {
         try { analysis = validateAnalysis(createMockAnalysis(window), window); }
         catch { throw invalidModelOutput(); }
@@ -179,6 +187,8 @@ export function createApp(options: AppOptions = {}) {
       billing: selected === 'codex' ? 'chatgpt-plan' : selected === 'api' ? 'api' : 'none',
       ...(usage ? { usage } : {}),
       ...(analysisAttempts ? { analysisAttempts } : {}),
+      ...(diagnostics?{diagnostics}:{}),
+      ...(parsed.data.planPolicy?{planPolicy:parsed.data.planPolicy}:{}),
       analyzedBars: window.length,
       generatedAt: new Date().toISOString(),
     };

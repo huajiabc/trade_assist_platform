@@ -38,6 +38,37 @@ describe('Binance public market adapter (stubbed transport)', () => {
     expect(fetchImpl.mock.calls.every(([, init]) => init?.method === 'GET' && init.redirect === 'error' && !('Authorization' in (init.headers ?? {})))).toBe(true);
   });
 
+  it('retries a reset public GET once using the original shared deadline and exact request', async () => {
+    const base = transport(); let reset = true;
+    const fetchImpl = vi.fn<typeof fetch>(async (url, options) => {
+      if (String(url).includes('/klines') && reset) { reset = false; throw new TypeError('connection reset', { cause: { code: 'ECONNRESET' } }); }
+      return base(url, options);
+    });
+    const result = await new BinanceMarketProvider(fetchImpl).getCandles(query);
+    expect(result.candles).toEqual(snapshot().candles); expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(new Set(fetchImpl.mock.calls.map(([, options]) => options!.signal)).size).toBe(1);
+    const klineCalls = fetchImpl.mock.calls.filter(([url]) => String(url).includes('/klines'));
+    expect(klineCalls).toHaveLength(2); expect(klineCalls[1][0]).toBe(klineCalls[0][0]);
+  });
+
+  it('bounds repeated reset errors to one retry and never fabricates a snapshot', async () => {
+    const base = transport(); const fetchImpl = vi.fn<typeof fetch>(async (url, options) => {
+      if (String(url).includes('/klines')) throw new TypeError('connection reset', { cause: { code: 'ECONNRESET' } });
+      return base(url, options);
+    });
+    await expect(new BinanceMarketProvider(fetchImpl).getCandles(query)).rejects.toMatchObject({ code: 'MARKET_UNAVAILABLE' });
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/klines'))).toHaveLength(2);
+  });
+
+  it('does not extend its timeout budget to perform a pending reset retry', async () => {
+    const base = transport(); const fetchImpl = vi.fn<typeof fetch>(async (url, options) => {
+      if (String(url).includes('/klines')) throw new TypeError('connection reset', { cause: { code: 'ECONNRESET' } });
+      return base(url, options);
+    });
+    await expect(new BinanceMarketProvider(fetchImpl, 15).getCandles(query)).rejects.toMatchObject({ code: 'MARKET_TIMEOUT' });
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/klines'))).toHaveLength(1);
+  });
+
   it('recognizes inclusive closeTime as closed at the next UTC interval boundary', async () => {
     const serverTime = (START + 20 * 3_600) * 1_000;
     const result = await new BinanceMarketProvider(transport(rows(), serverTime)).getCandles(query);

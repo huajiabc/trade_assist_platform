@@ -1,3 +1,4 @@
+import { strategyName } from '../../shared/strategyTypes';
 import type {
   AutoscaleInfo, IPrimitivePaneRenderer, IPrimitivePaneView, ISeriesPrimitive, Logical,
   PrimitiveHoveredItem, SeriesAttachedParameter, UTCTimestamp,
@@ -186,7 +187,7 @@ export class TradeOverlay implements ISeriesPrimitive {
       this.drawTrackingEvents(ctx, setup, occupied);
     }
     const ratio = targets[0].rewardRisk;
-    const ratioText = `${setup.direction === 'bullish' ? '多' : '空'} · R:R 1:${ratio < .01 ? ratio.toExponential(2) : ratio.toFixed(2)}`;
+    const ratioText = `${setup.strategyId?strategyName(setup.strategyId).split(' · ')[0]+' · ':''}${setup.direction === 'bullish' ? '多' : '空'} · R:R 1:${ratio < .01 ? ratio.toExponential(2) : ratio.toFixed(2)}`;
     this.tag(ctx, ratioText, x1 + 6, (entryY + targets[0].y) / 2, '#2bc5a8', `setup:${setup.id}`, occupied, false);
     ctx.restore();
   }

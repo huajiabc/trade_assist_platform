@@ -1,3 +1,6 @@
+import { STRATEGY_IDS } from './strategyTypes';
+import { planPolicySchema } from './planPolicy';
+import { analysisDiagnosticsSchema } from './analysisDiagnostics';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { Candle } from './market';
@@ -29,6 +32,7 @@ const structureSchema = z.object({
 }).strict();
 
 export const tradeSetupSchema = z.object({
+  strategyId: z.enum(STRATEGY_IDS).nullable().optional(),
   id: idSchema,
   opportunityId: idSchema.nullable(),
   direction: z.enum(['bullish', 'bearish']),
@@ -97,6 +101,8 @@ export const analysisEnvelopeSchema = z.object({
   generatedAt: z.string().datetime({ offset: true }),
   provider: z.enum(['codex', 'openai-compatible', 'mock']).optional(),
   billing: z.enum(['chatgpt-plan', 'api', 'none']).optional(),
+  diagnostics: analysisDiagnosticsSchema.optional(),
+  planPolicy: planPolicySchema.optional(),
   analysisAttempts: z.union([z.literal(1), z.literal(2)]).optional(),
   usage: z.object({
     inputTokens: z.number().int().nonnegative(),
@@ -109,6 +115,9 @@ export type AnalysisEnvelope = z.infer<typeof analysisEnvelopeSchema>;
 const generatedSchema = zodToJsonSchema(analysisSchema, { target: 'jsonSchema7', $refStrategy: 'none' });
 // OpenAI-compatible structured-output providers expect the schema body here.
 const { $schema: _schemaDialect, ...providerSchema } = generatedSchema;
+// Old saved 1.5 payloads may omit classification; fresh strict model output must explicitly provide it (or null).
+const setupProvider=(providerSchema as {properties?:{tradeSetups?:{items?:{required?:string[]}}}}).properties?.tradeSetups?.items;
+if(setupProvider?.required&&!setupProvider.required.includes('strategyId'))setupProvider.required.push('strategyId');
 export const analysisJsonSchema = providerSchema;
 
 // Parse complete legacy shapes first: mixed old/new fields must not be silently

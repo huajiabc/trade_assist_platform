@@ -1,3 +1,6 @@
+import { auditPlanScale, type PlanPolicy } from '../../shared/planPolicy';
+import type { Candle } from '../../shared/market';
+import { strategyName } from '../../shared/strategyTypes';
 import { ArrowUpRight, Clock, Info, Target } from '@phosphor-icons/react';
 import type { Analysis, LiquiditySweep, Structure, TradeSetup } from '../../shared/analysis';
 import { formatPrice } from '../../shared/format';
@@ -14,6 +17,7 @@ const ratio = (value: number) => value < .01 ? value.toExponential(2) : Intl.Num
 const percent = (value: number) => value < .01 ? value.toExponential(2) : value.toFixed(2);
 
 type TradePlansProps = {
+  planPolicy?:PlanPolicy;referenceCandles?:Candle[];
   tracking?: Record<string, PlanTrackingResult>;
   ruleStructures?: Structure[];
   onSelectReference?: (id: string) => void;
@@ -26,7 +30,7 @@ type TradePlansProps = {
   onSelectPA?: (id: string) => void;
 };
 
-export function TradePlans({ ruleStructures = [], onSelectReference, evidenceSummary = {}, analysis, rawAnalysis = analysis, selectedId, onSelect, onSelectStructure, onSelectPA, tracking = {} }: TradePlansProps) {
+export function TradePlans({ planPolicy,referenceCandles,ruleStructures = [], onSelectReference, evidenceSummary = {}, analysis, rawAnalysis = analysis, selectedId, onSelect, onSelectStructure, onSelectPA, tracking = {} }: TradePlansProps) {
   const setups = analysis?.tradeSetups ?? [];
   const availability = tradePlanAvailability(rawAnalysis, analysis);
   return <section className="trade-plans" aria-label="数值开仓候选与盈亏比">
@@ -34,11 +38,13 @@ export function TradePlans({ ruleStructures = [], onSelectReference, evidenceSum
     <p className="advanced-explainer">E 为参考入场，SL 为计划止损，TP 为目标价。风险∶收益按价格距离计算，未计手续费、滑点或资金费率；未指定持仓数量，不是账户实际盈亏，也不代表成交或胜率。</p>
     {setups.length ? <div className="trade-plan-grid">{setups.map((setup, index) => {
       const first = calculateRiskReward(setup);
+      const scale=planPolicy&&referenceCandles?auditPlanScale(setup,referenceCandles,planPolicy):null;
       return <article className={`trade-plan-card ${selectedId === setup.id ? 'is-selected' : ''}`} key={setup.id} data-setup-id={setup.id}>
         <div className="trade-plan-heading"><div><span className="advanced-number">{String(index + 1).padStart(2, '0')}</span><h4>{setup.direction === 'bullish' ? '偏多' : '偏空'}开仓候选</h4></div><span className="confirmation candidate"><Clock size={12}/>{PLAN_PHASE_LABELS[tracking[setup.id]?.phase ?? (setup.tracking ? 'waiting' : 'manual')]}</span></div>
+        <p className="strategy-badge">{strategyName(setup.strategyId)}{setup.strategyId&&' · AI归类（单周期，待跨周期核验）'}</p>
         <button className="trade-focus-button" onClick={() => onSelect(setup)} aria-pressed={selectedId === setup.id} aria-label={`定位开仓候选 ${index + 1}`}><span>定位 {date(setup.anchorTime)} UTC</span><ArrowUpRight size={15}/></button>
         <div className="trade-price-grid"><div><span>参考入场 E</span><strong>{formatPrice(setup.entry)}</strong></div><div><span>计划止损 SL</span><strong className="trade-loss">{formatPrice(setup.stopLoss)}</strong></div><div><span>止损距离</span><strong>{formatPrice(first.risk)}</strong><small>{percent(first.riskPct)}% · 价格距离</small></div></div>
-        <TradeStopAudit audit={evidenceSummary[setup.id]?.stopRisk}/>
+        <TradeStopAudit audit={evidenceSummary[setup.id]?.stopRisk}/>{scale&&<details className="plan-scale-audit"><summary>{planPolicy?.profile==='structural'?'结构波段':'局部短线'}幅度筛选依据</summary><p>参考周期 {scale.context.referenceTimeframe} · 保护至少 {formatPrice(scale.context.minimumRiskDistance)} / 首目标至少 {formatPrice(scale.context.minimumTargetDistance)} / 至少 {scale.context.minimumRR}R。属于本次分析快照的研究偏好，不是胜率或成交保证。</p>{scale.errors.map(error=><p className="plan-evidence-warning" key={error}>{error} 原计划保留不改价，请重新分析。</p>)}</details>}
         <div className="risk-reward-targets">{setup.targets.map((target, targetIndex) => {
           const reward = calculateRiskReward(setup, targetIndex);
           const riskWidth = reward.risk / (reward.risk + reward.reward) * 100;

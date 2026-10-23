@@ -6,6 +6,7 @@ import {AS_OF,frame,researchBundle} from './research-fixtures';
 import {RESEARCH_FRAMES,type ResearchFrame} from '../shared/researchData';
 import {modelContext,updateMarketState} from '../shared/marketState';
 import {localWorkbenchInterpretation} from '../shared/workbenchAnalysis';
+import {STRATEGY_CATALOG_VERSION} from '../shared/strategyCatalog';
 import {OpenAICompatibleProvider,type ModelInput} from '../server/provider';
 import type {MarketDataProvider} from '../server/market';
 import {analyzeWithValidation} from '../server/analysisService';
@@ -30,12 +31,12 @@ describe('multi-timeframe HTTP and adapter boundaries (no paid model calls)',()=
  it('returns a strictly validated interpretation with prior state and all frames in one call',async()=>{
   const analyze=vi.fn(async(input:ModelInput)=>localWorkbenchInterpretation(input.workbench!));const app=createApp({config,provider:{analyze},codexProvider:codex});
   const result=await request(app).post('/api/research/analyze').send(payload()).expect(200);
-  expect(result.body).toMatchObject({schemaVersion:'research-response-1.0',source:'ai',provider:'api',analysisAttempts:1});expect(result.body.analysis.frames).toHaveLength(3);expect(analyze).toHaveBeenCalledOnce();expect(analyze.mock.calls[0][0].workbench!.bundle.frames['15m'].candles).toHaveLength(40);expect(analyze.mock.calls[0][0].workbench!.previous.version).toBe(1);
+  expect(result.body).toMatchObject({schemaVersion:'research-response-1.0',catalogVersion:STRATEGY_CATALOG_VERSION,source:'ai',provider:'api',analysisAttempts:1});expect(analyze.mock.calls[0][0].workbench!.catalogVersion).toBe(STRATEGY_CATALOG_VERSION);expect(result.body.analysis.frames).toHaveLength(3);expect(analyze).toHaveBeenCalledOnce();expect(analyze.mock.calls[0][0].workbench!.bundle.frames['15m'].candles).toHaveLength(40);expect(analyze.mock.calls[0][0].workbench!.previous.version).toBe(1);
  });
  it('does not call a model for a local review and accepts a missing background with explicit downgrade',async()=>{
   const analyze=vi.fn(),p=payload();p.provider='mock';p.bundle.frames=p.bundle.frames.filter(f=>f.timeframe==='1m');
   const result=await request(createApp({config,provider:{analyze},codexProvider:codex})).post('/api/research/analyze').send(p).expect(200);
-  expect(result.body.analysis.frames.find((f:{timeframe:string})=>f.timeframe==='15m').regime).toBe('unavailable');expect(result.body.analysisAttempts).toBe(0);expect(analyze).not.toHaveBeenCalled();
+  expect(result.body.analysis.frames.find((f:{timeframe:string})=>f.timeframe==='15m').regime).toBe('unavailable');expect(result.body.analysisAttempts).toBe(0);expect(result.body.catalogVersion).toBe(STRATEGY_CATALOG_VERSION);expect(analyze).not.toHaveBeenCalled();
  });
  it('retries one invalid interpretation against the same snapshot and rejects a second invalid one',async()=>{
   const analyze=vi.fn(async(input:ModelInput)=>({...localWorkbenchInterpretation(input.workbench!),madeUpFacts:[1]}));
@@ -58,7 +59,7 @@ describe('multi-timeframe HTTP and adapter boundaries (no paid model calls)',()=
   const context=modelContext(updateMarketState(null,researchBundle()));
   const fetcher=vi.fn<typeof fetch>(async()=>new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify(localWorkbenchInterpretation(context))}}]})));
   await new OpenAICompatibleProvider(config,fetcher).analyze({candles:context.bundle.frames['1m'].candles,context:{symbol:'SNDKUSDT',timeframe:'1m',notes:''},workbench:context});
-  const sent=JSON.parse(fetcher.mock.calls[0][1]!.body as string);expect(sent.response_format.json_schema.schema.properties).toHaveProperty('strategyReviews');expect(sent.messages[0].content).toContain('15m负责背景');expect(JSON.parse(sent.messages[1].content).bundle.frames['5m'].candles).toHaveLength(40);
+  const sent=JSON.parse(fetcher.mock.calls[0][1]!.body as string);expect(sent.response_format.json_schema.schema.properties).toHaveProperty('strategyReviews');expect(sent.messages[0].content).toContain('15m负责背景');expect(JSON.parse(sent.messages[1].content).bundle.frames['5m'].candles).toHaveLength(40);expect(JSON.parse(sent.messages[1].content).catalogVersion).toBe(STRATEGY_CATALOG_VERSION);
  });
  it('shares a single deadline with a custom validation contract and handles model timeouts without partial success',async()=>{
   const context=modelContext(updateMarketState(null,researchBundle()));

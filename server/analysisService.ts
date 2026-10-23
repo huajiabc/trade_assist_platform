@@ -1,6 +1,10 @@
+import { validateFreshAnalysis } from './analysisPolicy';
 import { validateAnalysis, type Analysis, type AnalysisEnvelope } from '../shared/analysis';
 import { invalidModelOutput, PublicError, type AnalysisTimeoutDetails } from './errors';
-import type { ModelInput } from './provider';
+import { modelPayload, type ModelInput } from './provider';
+import { randomUUID } from 'node:crypto';
+import type { AnalysisDiagnostics } from '../shared/analysisDiagnostics';
+import { recordAnalysisTelemetry } from './analysisTelemetry';
 
 type Usage = NonNullable<AnalysisEnvelope['usage']>;
 interface ModelResult { analysis: unknown; model: string; usage?: Usage }
@@ -9,6 +13,7 @@ export interface ValidatedAnalysisResult<T=Analysis> {
   analysis: T;
   model: string;
   analysisAttempts: 1 | 2;
+  diagnostics: AnalysisDiagnostics;
   usage?: Usage;
 }
 
@@ -64,6 +69,9 @@ export async function analyzeWithValidation<T=Analysis>(
   const controller = new AbortController();
   const startedAt = Date.now();
   const deadline = startedAt + options.timeoutMs;
+  let providerMs=0,validationMs=0,outcome:'success'|'error'='error',model:string|null=null,errorCode:string|null=null;
+  const requestId=randomUUID(),inputBytes=Buffer.byteLength(JSON.stringify(modelPayload(input)));
+  const diagnostics=():AnalysisDiagnostics=>({requestId,inputMode:input.visuals?.length?'hybrid':'data',elapsedMs:Math.max(0,Date.now()-startedAt),providerMs,validationMs,attempts,inputBytes,imageCount:input.visuals?.length??0,imageBytes:(input.visuals??[]).reduce((n,image)=>n+Buffer.byteLength(image.base64,'base64'),0)});
   let stage: AnalysisTimeoutDetails['stage'] = 'initial-response';
   let attempts = 0, completedModelCalls = 0;
   let firstResponseMs: number | null = null;
@@ -89,29 +97,36 @@ export async function analyzeWithValidation<T=Analysis>(
       stage = attempt === 1 ? 'initial-response' : 'correction-response';
       // Transport/auth/network/parse errors are outside the validation catch:
       // retrying those could spend quota without a usable correction target.
-      const result = await run({ ...input, signal: controller.signal,
-        ...(feedback ? { validationFeedback: feedback } : {}) });
+      const callStart=Date.now();
+      let result:ModelResult;
+      try { result=await run({ ...input, signal: controller.signal, ...(feedback ? { validationFeedback: feedback } : {}) }); }
+      finally { providerMs+=Math.max(0,Date.now()-callStart); }
+      model=result.model;
       completedModelCalls++;
       if (firstResponseMs === null) firstResponseMs = Date.now() - startedAt;
       stage = 'result-validation';
       ensureActive();
       usage.push(result.usage);
       let analysis: T;
+      const validationStart=Date.now();
       try {
-        analysis = options.validate ? options.validate(result.analysis) : validateAnalysis(result.analysis, input.candles) as T;
+        analysis = options.validate ? options.validate(result.analysis) : validateFreshAnalysis(result.analysis, input) as T;
       } catch (error) {
         category = validationCategory(error);
         if (attempt === 2) throw invalidModelOutput();
         feedback = repairFeedback(result.analysis, error);
         continue;
-      }
+      } finally { validationMs+=Math.max(0,Date.now()-validationStart); }
       const total = totalUsage(usage);
-      return { analysis, model: result.model, analysisAttempts: attempt, ...(total ? { usage: total } : {}) };
+      outcome='success';
+      return { analysis, model: result.model, analysisAttempts: attempt, diagnostics:diagnostics(), ...(total ? { usage: total } : {}) };
     }
     throw invalidModelOutput();
   } catch (error) {
+    errorCode=error instanceof PublicError?error.code:'PROVIDER_UNAVAILABLE';
     if (controller.signal.aborted) {
-      if (!timedOut) throw new PublicError(499, 'ANALYSIS_CANCELLED', '本次分析已取消。');
+      if (!timedOut) {errorCode='ANALYSIS_CANCELLED';throw new PublicError(499, 'ANALYSIS_CANCELLED', '本次分析已取消。');}
+      errorCode=options.provider==='codex'?'CODEX_TIMEOUT':'PROVIDER_TIMEOUT';
       const details: AnalysisTimeoutDetails = { stage, attempts, completedModelCalls, budgetMs: options.timeoutMs,
         elapsedMs: Math.max(0, Date.now() - startedAt), firstResponseMs, validationCategory: category };
       const reason = stage === 'correction-response'
@@ -123,6 +138,7 @@ export async function analyzeWithValidation<T=Analysis>(
     if (error instanceof PublicError) throw error;
     throw new PublicError(502, 'PROVIDER_UNAVAILABLE', '模型服务处理失败，请检查服务端配置后重试。');
   } finally {
+    recordAnalysisTelemetry(diagnostics(),{provider:options.provider,kind:input.workbench?'multi':'single',outcome,model,errorCode,validationCategory:category});
     clearTimeout(timer);
     input.signal?.removeEventListener('abort', cancel);
   }

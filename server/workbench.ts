@@ -1,8 +1,11 @@
+import { planPolicySchema, resolvePlanPolicy } from '../shared/planPolicy';
+import { visualRequestFields, validateImageAnchors } from '../shared/analysisInput';
+import { chartImageBytes } from './chartImages';
 import { tradeSetupSchema } from '../shared/analysis';
 import { Router } from 'express';
 import { z } from 'zod';
 import { RESEARCH_FRAMES, exchangeFrame, frameInputSchema, makeResearchBundle, csvResearchBundle, extractFrameFacts, type ResearchFrame, type FrameInput } from '../shared/researchData';
-import { evaluateStrategies } from '../shared/strategyCatalog';
+import { evaluateStrategies, STRATEGY_CATALOG_VERSION } from '../shared/strategyCatalog';
 import { workbenchOutputSchema, validateWorkbenchInterpretation, localWorkbenchInterpretation } from '../shared/workbenchAnalysis';
 import type { MarketDataProvider } from './market';
 import type { AnalysisProvider, ModelInput } from './provider';
@@ -12,6 +15,8 @@ import { PublicError } from './errors';
 import { analyzeWithValidation } from './analysisService';
 const previousSchema=z.object({version:z.number().int().nonnegative(),interpretation:workbenchOutputSchema.nullable(),changes:z.array(z.string().max(500)).max(20),plans:z.array(z.object({id:z.string().max(100),status:z.string().max(80),version:z.number().int().positive(),setup:tradeSetupSchema,reviewReasons:z.array(z.string().max(500)).max(30)}).strict()).max(20).optional(),positions:z.array(z.object({id:z.string().max(100),planId:z.string().max(100),direction:z.enum(['bullish','bearish']),entry:z.number().positive().finite(),quantity:z.number().positive().finite(),filledAt:z.number().int().nonnegative(),source:z.literal('user-confirmed'),review:z.array(z.string().max(500)).max(30)}).strict()).max(20).optional()}).strict();
 export const researchRequestSchema=z.object({
+ ...visualRequestFields,
+ planPolicy:planPolicySchema.optional(),
  bundle:z.object({symbol:z.string().trim().min(1).max(60),asOf:z.number().int().nonnegative(),frames:z.array(frameInputSchema).min(1).max(3)}).strict(),
  previous:previousSchema,provider:z.enum(['codex','api','mock']),notes:z.string().max(2000),
 }).strict();
@@ -22,8 +27,10 @@ export function prepareResearchRequest(raw:unknown){
   const expected=csvResearchBundle(bundle.symbol,base.candles,'1m');
   for(const f of derived){const correct=expected.frames[f.timeframe];if(f.derivedFrom!==correct.derivedFrom||JSON.stringify(f.candles)!==JSON.stringify(correct.candles))throw new Error('聚合OHLCV或来源未通过确定性重算。');}
  }
- const facts=RESEARCH_FRAMES.flatMap(tf=>extractFrameFacts(bundle.frames[tf])),candidates=evaluateStrategies(bundle,facts);
- return {input,context:{bundle,facts,candidates,previous:input.previous}};
+ validateImageAnchors(input.inputMode??'data',input.images??[],RESEARCH_FRAMES.map(tf=>bundle.frames[tf]));
+ for(const image of input.images??[])chartImageBytes(image);
+ const facts=RESEARCH_FRAMES.flatMap(tf=>extractFrameFacts(bundle.frames[tf])),candidates=evaluateStrategies(bundle,facts,resolvePlanPolicy(input.planPolicy));
+ return {input,context:{catalogVersion:STRATEGY_CATALOG_VERSION,planPolicy:resolvePlanPolicy(input.planPolicy),bundle,facts,candidates,previous:input.previous}};
 }
 export function createResearchRouter(deps:{market:MarketDataProvider;config:ServerConfig;provider:AnalysisProvider;codex:CodexProvider;isCodexBusy:()=>boolean;setCodexBusy:(busy:boolean)=>void}){
  const router=Router();
@@ -47,11 +54,11 @@ export function createResearchRouter(deps:{market:MarketDataProvider;config:Serv
   const controller=new AbortController(),close=()=>{if(!response.writableEnded)controller.abort();};response.once('close',close);
   if(selected==='codex')deps.setCodexBusy(true);
   try{
-   const modelInput:ModelInput={candles:focus.candles,context:{symbol:context.bundle.symbol,timeframe:focus.timeframe,notes:input.notes},workbench:context,signal:controller.signal};
+   const modelInput:ModelInput={candles:focus.candles,context:{symbol:context.bundle.symbol,timeframe:focus.timeframe,notes:input.notes},workbench:context,visuals:input.images,signal:controller.signal};
    const result=selected==='mock'?{analysis:validateWorkbenchInterpretation(localWorkbenchInterpretation(context),context),model:'local-rules-unreviewed',analysisAttempts:0}:
     await analyzeWithValidation(modelInput,async fixed=>selected==='codex'?deps.codex.analyzeDetailed(fixed,fixed.signal):{analysis:await deps.provider.analyze(fixed),model:deps.config.model},
       {provider:selected,timeoutMs:selected==='codex'?deps.config.codexTimeoutMs:deps.config.timeoutMs,validate:raw=>validateWorkbenchInterpretation(raw,context)});
-   response.json({schemaVersion:'research-response-1.0',snapshotId:context.bundle.id,stateVersion:context.previous.version,source:selected==='mock'?'mock':'ai',provider:selected,generatedAt:new Date().toISOString(),...result});
+   response.json({schemaVersion:'research-response-1.0',catalogVersion:context.catalogVersion,snapshotId:context.bundle.id,stateVersion:context.previous.version,source:selected==='mock'?'mock':'ai',provider:selected,generatedAt:new Date().toISOString(),...result});
   }finally{response.removeListener('close',close);if(selected==='codex')deps.setCodexBusy(false);}
  });
  return router;
