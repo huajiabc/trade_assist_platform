@@ -24,6 +24,7 @@ function harness(overlay = new KeyLevelOverlay()) {
 }
 
 describe('native AI key level overlay', () => {
+  it('reuses native lines for existing versus suggested position prices with explicit styles',()=>{const h=harness();h.overlay.setData([{...level(95,'已设SL'),appearance:{color:'#f87983',style:'solid',unindexed:true}},{...level(96.5,'建议SL · 未设置'),appearance:{color:'#ffb56b',style:'dashed',unindexed:true}}],1);const lines=[...h.active.values()];expect(lines[0]).toMatchObject({price:95,title:'已设SL',lineStyle:LineStyle.Solid,color:'#f87983'});expect(lines[1]).toMatchObject({price:96.5,title:'建议SL · 未设置',lineStyle:LineStyle.Dashed,axisLabelTextColor:'#e2e9f4'});});
   it('creates exact native price lines without altering the validated prices or relying on canvas drawings', () => {
     const h = harness();
     const levels = [level(1408.35, '全段高点'), level()];

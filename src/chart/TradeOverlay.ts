@@ -1,4 +1,6 @@
 import { strategyName } from '../../shared/strategyTypes';
+import type { PositionChartModel } from '../../shared/positionChart';
+import { mapPositionAreas } from './positionCoordinates';
 import type {
   AutoscaleInfo, IPrimitivePaneRenderer, IPrimitivePaneView, ISeriesPrimitive, Logical,
   PrimitiveHoveredItem, SeriesAttachedParameter, UTCTimestamp,
@@ -8,6 +10,7 @@ import { formatPrice } from '../../shared/format';
 import { PLAN_PHASE_LABELS, type PlanTrackingResult } from '../../shared/tradeTracking';
 import type { Viewport } from './coordinates';
 import { ChartLabelRegistry, placeLabel, type LabelBox } from './labelLayout';
+import { labelSurface } from './drawingStyle';
 import {
   distanceToSweepGeometry, distanceToTradeGeometry, mapLiquiditySweep, mapTradeSetup, SETUP_PROJECTION_BARS,
   type SweepGeometry, type TradeGeometry,
@@ -25,6 +28,8 @@ export class TradeOverlay implements ISeriesPrimitive {
   private selectedSweepId: string | null = null;
   private tracking: PlanTrackingResult | undefined;
   private dimmed = false;
+  private includePlanInScale = false;
+  private position:PositionChartModel|null=null;
   private priceMultiplier = 1;
   private viewport: Viewport = { width: 0, height: 0 };
   private drawnSetup: DrawSetup | null = null;
@@ -53,12 +58,22 @@ export class TradeOverlay implements ISeriesPrimitive {
     this.dimmed = dimmed;
     this.attachment?.requestUpdate();
   }
+  setPositionData(position:PositionChartModel|null):void{this.position=position;this.attachment?.requestUpdate();}
+
+  /** Inspecting an entry keeps the native candle scale. Expanding the scale
+   * to distant structural SL/TP prices is an explicit full-plan view. */
+  setIncludePlanInScale(include: boolean): void {
+    if (this.includePlanInScale === include) return;
+    this.includePlanInScale = include;
+    this.attachment?.requestUpdate();
+  }
 
   autoscaleInfo(from: Logical, to: Logical): AutoscaleInfo | null {
     if (!this.attachment) return null;
     const scale = this.attachment.chart.timeScale();
     const prices: number[] = [];
-    if (this.setup) {
+    if(this.position)prices.push(...this.position.lines.map(line=>line.price));
+    if (this.setup && this.includePlanInScale) {
       const anchor = scale.timeToIndex(this.setup.anchorTime as UTCTimestamp);
       if (anchor !== null && anchor <= to && anchor + SETUP_PROJECTION_BARS >= from) {
         prices.push(this.setup.entry, this.setup.stopLoss, ...this.setup.targets.map((target) => target.price));
@@ -117,6 +132,10 @@ export class TradeOverlay implements ISeriesPrimitive {
       ctx.save();
       ctx.beginPath(); ctx.rect(0, 0, mediaSize.width, mediaSize.height); ctx.clip();
       if (background) {
+        if(this.position&&this.attachment){for(const area of mapPositionAreas(this.position,price=>this.attachment!.series.priceToCoordinate(price*this.priceMultiplier),mediaSize)){
+          ctx.fillStyle=area.source==='advice'?(area.kind==='risk'?'rgba(255,181,107,.12)':'rgba(179,160,255,.14)'):(area.kind==='risk'?'rgba(242,54,69,.15)':'rgba(8,153,129,.16)');
+          ctx.fillRect(area.left,area.top,area.width,area.height);
+        }}
         if (this.drawnSetup) {
           ctx.save(); if (this.dimmed || this.selectedSweepId || this.isRetired()) ctx.globalAlpha = .3;
           this.drawRiskAreas(ctx, this.drawnSetup.geometry); ctx.restore();
@@ -144,11 +163,16 @@ export class TradeOverlay implements ISeriesPrimitive {
 
   private drawRiskAreas(ctx: CanvasRenderingContext2D, geometry: TradeGeometry): void {
     const width = geometry.endX - geometry.anchorX;
-    ctx.fillStyle = 'rgba(242,54,69,.15)';
-    ctx.fillRect(geometry.anchorX, Math.min(geometry.entryY, geometry.stopY), width, Math.abs(geometry.stopY - geometry.entryY));
+    const fill = (level: number, color: string) => {
+      const top = Math.max(0, Math.min(geometry.entryY, level));
+      const bottom = Math.min(this.viewport.height, Math.max(geometry.entryY, level));
+      if (bottom <= top) return;
+      ctx.fillStyle = color;
+      ctx.fillRect(geometry.anchorX, top, width, bottom - top);
+    };
+    fill(geometry.stopY, 'rgba(242,54,69,.15)');
     const target = geometry.targets[0];
-    ctx.fillStyle = 'rgba(8,153,129,.16)';
-    ctx.fillRect(geometry.anchorX, Math.min(geometry.entryY, target.y), width, Math.abs(target.y - geometry.entryY));
+    fill(target.y, 'rgba(8,153,129,.16)');
   }
 
   private drawSetup(ctx: CanvasRenderingContext2D, { setup, geometry }: DrawSetup, occupied: LabelBox[]): void {
@@ -174,21 +198,27 @@ export class TradeOverlay implements ISeriesPrimitive {
     this.diamond(ctx, x1, entryY, 5, '#d1d4dc', false);
     // Keep trade prices left of the anchor: native key-level titles occupy
     // the right edge of the pane and would otherwise cover E / SL / TP labels.
+    let topHints = 0, bottomHints = 0;
     const tradePriceTag = (text: string, y: number, color: string) => {
       ctx.font = '500 12px Arial, "Segoe UI", sans-serif';
-      this.tag(ctx, text, x1 - ctx.measureText(text).width - 16, y, color,
-        `setup:${setup.id}`, occupied, true, { x: x1, y });
+      const outside = y < 0 || y > this.viewport.height;
+      const label = outside ? `${y < 0 ? '↑' : '↓'} ${text} · 图外` : text;
+      // An edge hint is text, never a replacement price line or a clamped TP.
+      const labelY = outside ? y < 0 ? 14 + 24 * topHints++ : this.viewport.height - 14 - 24 * bottomHints++ : y;
+      this.tag(ctx, label, x1 - ctx.measureText(label).width - 16, labelY, color,
+        `setup:${setup.id}`, occupied, true, outside ? undefined : { x: x1, y });
     };
     tradePriceTag(`入场候选 ${formatPrice(setup.entry)}`, entryY, '#d1d4dc');
     tradePriceTag(`SL ${formatPrice(setup.stopLoss)}`, stopY, '#ff6b77');
     targets.forEach((target, index) => tradePriceTag(`TP${index + 1}${setup.targets[index].label.startsWith('15m ')?' · 15m':''} ${formatPrice(target.price)}`, target.y, '#2bc5a8'));
     if (this.tracking) {
-      this.tag(ctx, PLAN_PHASE_LABELS[this.tracking.phase], x1 + 6, Math.min(stopY, targets[0].y) + 12, '#b9c9ed', `setup:${setup.id}`, occupied, true);
+      this.tag(ctx, PLAN_PHASE_LABELS[this.tracking.phase], x1 + 6, Math.max(16, Math.min(this.viewport.height - 16, entryY - 26)), '#b9c9ed', `setup:${setup.id}`, occupied, true);
       this.drawTrackingEvents(ctx, setup, occupied);
     }
     const ratio = targets[0].rewardRisk;
     const ratioText = `${setup.strategyId?strategyName(setup.strategyId).split(' · ')[0]+' · ':''}${setup.direction === 'bullish' ? '多' : '空'} · 参考 R:R 1:${ratio < .01 ? ratio.toExponential(2) : ratio.toFixed(2)}`;
-    this.tag(ctx, ratioText, x1 + 6, (entryY + targets[0].y) / 2, '#2bc5a8', `setup:${setup.id}`, occupied, false);
+    const visibleTargetY = Math.max(0, Math.min(this.viewport.height, targets[0].y));
+    this.tag(ctx, ratioText, x1 + 6, (entryY + visibleTargetY) / 2, '#2bc5a8', `setup:${setup.id}`, occupied, false);
     ctx.restore();
   }
 
@@ -261,7 +291,7 @@ export class TradeOverlay implements ISeriesPrimitive {
         ctx.save(); ctx.globalAlpha = 0.55; ctx.strokeStyle = color; ctx.lineWidth = 0.8; ctx.setLineDash([]);
         ctx.beginPath(); ctx.moveTo(anchor.x, anchor.y); ctx.lineTo(closestX, closestY); ctx.stroke(); ctx.restore();
       }
-      ctx.fillStyle = 'rgba(19,23,34,.95)'; ctx.fillRect(box.left, box.top, box.width, box.height);
+      labelSurface(ctx, box, false);
       ctx.fillStyle = color; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
       ctx.fillText(text, box.left + 5, box.top + 10);
       this.labelHits.push({ id, box });

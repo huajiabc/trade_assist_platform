@@ -1,3 +1,4 @@
+import { shortDisplayTime } from '../../shared/displayTime';
 import { ArrowUpRight, Check, Clock, Info } from '@phosphor-icons/react';
 import type { Analysis } from '../../shared/analysis';
 import type { Candle } from '../../shared/market';
@@ -9,7 +10,7 @@ export type PAEvidence = PAZone | PALeg | PAPattern | PABreakout;
 export const paRegimeNames = { uptrend: '上升趋势', downtrend: '下降趋势', range: '区间震荡', transition: '结构转换' };
 export const paLayerNames: Record<PALayer, string> = { zones: '支撑 / 阻力 / 区间', legs: '推进与回撤', patterns: 'K 线形态', breakouts: '突破与回踩' };
 const patternNames = { 'pin-bar': 'Pin bar · 拒绝', engulfing: 'Engulfing · 吞没', 'inside-bar': 'Inside bar · 内包' };
-const date = (time: number) => new Date(time * 1000).toISOString().replace('T', ' ').slice(5, 16);
+const date = (time: number) => shortDisplayTime(time);
 
 export function getPAEvidence(priceAction?: Analysis['priceAction']): { layer: PALayer; item: PAEvidence }[] {
   return priceAction ? (['zones', 'legs', 'patterns', 'breakouts'] as const).flatMap(layer => priceAction[layer].map(item => ({ layer, item }))) : [];
@@ -61,7 +62,7 @@ export function PriceActionPanel({ priceAction, candles, selectedId, showCandida
               {breakout && <div className="pa-breakout-steps" aria-label="突破回踩阶段"><span className="observed"><b>1</b>突破</span><i>→</i><span className={breakout.retestTime !== null ? 'observed' : ''}><b>2</b>{breakout.retestTime !== null ? '已回踩' : '待回踩'}</span><i>→</i><span className={breakout.confirmationTime !== null ? 'observed' : ''}><b>3</b>{breakout.confirmationTime !== null ? '守住边界' : '待确认'}</span></div>}
             </div>
             <p className="pa-card-rationale">{item.rationale}</p><p className="pa-card-invalidation"><span>失效条件</span>{item.invalidation}</p>
-            <button className="pa-focus-button" onClick={() => onSelect(item.id)} aria-pressed={selectedId === item.id} aria-label={`定位 PA ${item.title}`}><span>{date(startTime)}{endTime !== startTime ? ` 至 ${date(endTime)}` : ''} UTC</span><ArrowUpRight size={15}/></button>
+            <button className="pa-focus-button" onClick={() => onSelect(item.id)} aria-pressed={selectedId === item.id} aria-label={`定位 PA ${item.title}`}><span>{date(startTime)}{endTime !== startTime ? ` 至 ${date(endTime)}` : ''} UTC+8</span><ArrowUpRight size={15}/></button>
           </article>;
         })}</div>}
       </section>;

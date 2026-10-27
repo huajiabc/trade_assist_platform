@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, showChartSettings, showSinglePeriod } from './fixtures';
 import { createMockAnalysis } from '../../shared/mock';
 import { PA_SAMPLE_CANDLES } from '../../shared/paSample';
 import { SAMPLE_CANDLES } from '../../shared/sample';
@@ -10,6 +10,7 @@ test('PA teaching example exposes real candle geometry, family views and selecta
   page.on('pageerror', error => errors.push(error.message));
   page.on('request', request => { if (request.url().endsWith('/api/analyze')) analysisRequests++; });
   await page.goto('/?demo=smc');
+  await showSinglePeriod(page); await showChartSettings(page);
   await expect(page.getByRole('button', { name: 'PA 主视图', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('tab', { name: /PA 价格行为/ })).toHaveAttribute('aria-selected', 'true');
   await page.getByRole('button', { name: '导入 CSV', exact: true }).click();
@@ -51,6 +52,7 @@ test('PA teaching example exposes real candle geometry, family views and selecta
 test('PA cards re-enable hidden candidates and mobile workbench stays inside viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/?demo=pa');
+  await showSinglePeriod(page); await showChartSettings(page);
   await expect(page.locator('.pa-evidence-card')).not.toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole('checkbox', { name: '显示候选', exact: true }).uncheck();
@@ -77,6 +79,7 @@ test('legacy 1.1 results keep PA empty instead of inventing price action evidenc
     analysis: { ...legacy, schemaVersion: '1.1' }, source: 'mock', model: 'legacy-test', analyzedBars: SAMPLE_CANDLES.length, generatedAt: new Date().toISOString(),
   }) }));
   await page.goto('/?demo=smc');
+  await showSinglePeriod(page); await showChartSettings(page);
   await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect(page.getByRole('status').filter({ hasText: '分析完成' })).toBeVisible();
   await expect(page.locator('.pa-evidence-card')).toHaveCount(0);
@@ -95,6 +98,7 @@ test('observation plans can focus PA evidence and reveal its family', async ({ p
     analysis: result, source: 'mock', model: 'pa-ref-test', analyzedBars: SAMPLE_CANDLES.length, generatedAt: new Date().toISOString(),
   }) }));
   await page.goto('/?demo=smc');
+  await showSinglePeriod(page); await showChartSettings(page);
   await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect(page.getByRole('status').filter({ hasText: '分析完成' })).toBeVisible();
   await page.getByRole('button', { name: 'SMC 主视图', exact: true }).click();

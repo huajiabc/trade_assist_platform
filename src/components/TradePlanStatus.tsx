@@ -1,3 +1,4 @@
+import { formatDisplayTime } from '../../shared/displayTime';
 import { ArrowUpRight, Crosshair, Target } from '@phosphor-icons/react';
 import type { Analysis, TradeSetup } from '../../shared/analysis';
 import type { AnalysisSnapshot } from '../analysisSession';
@@ -5,7 +6,7 @@ import { tradePlanAvailability } from '../tradePlanAvailability';
 import { PLAN_PHASE_LABELS, type PlanTrackingResult } from '../../shared/tradeTracking';
 import { TradePlanTracking } from './TradePlanTracking';
 
-const utc = (time: number) => new Date(time * 1000).toISOString().replace('T', ' ').slice(0, 16);
+const utc = (time: number) => formatDisplayTime(time);
 
 export function TradePlanStatus({ rawAnalysis, analysis, snapshot, selectedId, layerVisible, onSelect, onOpenDetails, tracking = {} }: {
   tracking?: Record<string, PlanTrackingResult>;
@@ -33,7 +34,7 @@ export function TradePlanStatus({ rawAnalysis, analysis, snapshot, selectedId, l
     {availability.hiddenCount > 0 && current && <p className="trade-plan-observations">另有 {availability.hiddenCount} 个原始计划因锚点或依据变更而隐藏。</p>}
     {current && <p className="trade-plan-trigger"><span>触发条件</span>{current.trigger}</p>}
     {current && <TradePlanTracking setup={current} result={tracking[current.id]} compact/>}
-    {snapshot && <p className="trade-plan-snapshot">{snapshot.selectionMode === 'manual' ? '手动范围快照' : '分析快照'} · 末根 <time dateTime={new Date(snapshot.asOf * 1000).toISOString()}>{utc(snapshot.asOf)} UTC</time>（开盘时间）。计划锚定原快照，行情条件核验不代表成交。</p>}
+    {snapshot && <p className="trade-plan-snapshot">{snapshot.selectionMode === 'manual' ? '手动范围快照' : '分析快照'} · 末根 <time dateTime={new Date(snapshot.asOf * 1000).toISOString()}>{utc(snapshot.asOf)} UTC+8</time>（开盘时间）。计划锚定原快照，行情条件核验不代表成交。</p>}
     {rawAnalysis && <div className="trade-plan-status-actions">{current && <>
       {setups.length > 1 && <label>图中计划<select aria-label="选择图中开仓计划" value={current.id} onChange={event => { const setup = setups.find(item => item.id === event.target.value); if (setup) onSelect(setup); }}>{setups.map((setup, index) => <option value={setup.id} key={setup.id}>{index + 1} · {setup.direction === 'bullish' ? '偏多' : '偏空'} · {phase(setup)}</option>)}</select></label>}
       <button type="button" onClick={() => onSelect(current)}><Crosshair size={14}/>{layerVisible ? '定位当前计划' : '显示并定位计划'}</button>

@@ -9,7 +9,8 @@ import {
 } from 'lightweight-charts';
 import type { Analysis } from '../../shared/analysis';
 
-type KeyLevels = Analysis['keyLevels'];
+export type ChartPriceLevel=Analysis['keyLevels'][number]&{appearance?:{color:string;style:'solid'|'dashed'|'dotted';unindexed?:boolean;muted?:boolean}};
+type KeyLevels = ChartPriceLevel[];
 
 /** Global research levels have prices but no evidence timestamp. Use native
  * horizontal price lines, without manufacturing candle anchors or signals. */
@@ -80,18 +81,19 @@ export class KeyLevelOverlay implements ISeriesPrimitive {
       if (!Number.isFinite(price) || price <= 0) return;
       wanted.add(index);
       const selected = index === this.selectedIndex;
+      const appearance=level.appearance,color=appearance?.color??(selected?'#f0c674':'#8094b5');
       const label = level.label.length > 24 ? `${level.label.slice(0, 23)}…` : level.label;
       const options: CreatePriceLineOptions = {
         id: `key-level:${index}`,
         price,
-        title: `${String(index + 1).padStart(2, '0')} · ${label}`,
-        color: selected ? '#f0c674' : '#8094b5',
+        title: appearance?.unindexed?label:`${String(index + 1).padStart(2, '0')} · ${label}`,
+        color,
         lineWidth: selected ? 2 : 1,
-        lineStyle: LineStyle.Dashed,
+        lineStyle: appearance?.style==='solid'?LineStyle.Solid:appearance?.style==='dotted'?LineStyle.Dotted:LineStyle.Dashed,
         lineVisible: true,
         axisLabelVisible: true,
-        axisLabelColor: selected ? '#f0c674' : '#263346',
-        axisLabelTextColor: selected ? '#131722' : '#c5d3e8',
+        axisLabelColor: appearance?'#263346':selected ? '#f0c674' : '#263346',
+        axisLabelTextColor: appearance?'#e2e9f4':selected ? '#131722' : '#c5d3e8',
       };
       const line = this.lines.get(index);
       if (line) line.applyOptions(options);

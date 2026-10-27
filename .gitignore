@@ -3,6 +3,8 @@ dist/
 .env
 .env.*
 !.env.example
+/keys.txt
+/secret.txt
 playwright-report/
 test-results/
 artifacts/

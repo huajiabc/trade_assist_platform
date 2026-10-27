@@ -51,8 +51,8 @@ test('automatic CSV range sends exactly the latest 300 bars and manual input sen
   await page.getByRole('button', { name: '手动范围', exact: true }).click();
   await expect(page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first()).toBeDisabled();
   await expect(toolbar).toContainText('请先在图表拖选 K 线范围');
-  const from = page.getByLabel('范围开始 UTC', { exact: true });
-  const to = page.getByLabel('范围结束 UTC', { exact: true });
+  const from = page.getByLabel('范围开始 UTC+8', { exact: true });
+  const to = page.getByLabel('范围结束 UTC+8', { exact: true });
   await expect(from.locator('option')).toHaveCount(401); // 400 CSV bars plus the placeholder.
   await from.selectOption(String(snapshot.candles[112].timestamp));
   await to.selectOption(String(snapshot.candles[140].timestamp));
@@ -76,8 +76,8 @@ test('manual selections below 10, above 300 or reversed cannot spend model quota
   await importHistory(page, snapshot);
   await page.getByRole('button', { name: '手动范围', exact: true }).click();
   const toolbar = page.getByLabel('分析 K 线范围', { exact: true });
-  const from = page.getByLabel('范围开始 UTC', { exact: true });
-  const to = page.getByLabel('范围结束 UTC', { exact: true });
+  const from = page.getByLabel('范围开始 UTC+8', { exact: true });
+  const to = page.getByLabel('范围结束 UTC+8', { exact: true });
   await from.selectOption(String(snapshot.candles[0].timestamp));
   await to.selectOption(String(snapshot.candles[8].timestamp));
   await expect(toolbar).toContainText('当前 9 根');
@@ -114,8 +114,8 @@ test('chart drag and two-click selection map to real closed-bar endpoints withou
   await page.mouse.move(bounds.x + bounds.width * .65, y + 5, { steps: 12 });
   await page.mouse.up();
   await expect(surface).toBeHidden();
-  const from = page.getByLabel('范围开始 UTC', { exact: true });
-  const to = page.getByLabel('范围结束 UTC', { exact: true });
+  const from = page.getByLabel('范围开始 UTC+8', { exact: true });
+  const to = page.getByLabel('范围结束 UTC+8', { exact: true });
   const selectedFrom = Number(await from.inputValue());
   const selectedTo = Number(await to.inputValue());
   await expect(from.locator('option')).toHaveCount(80); // 79 closed bars, never the forming tail.

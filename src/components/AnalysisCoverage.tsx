@@ -1,8 +1,9 @@
+import { formatDisplayTime } from '../../shared/displayTime';
 import type { Analysis } from '../../shared/analysis';
 import type { Candle } from '../../shared/market';
 import { summarizeAnalysisAnnotations } from '../analysisCoverage';
 
-const utc = (timestamp: number) => `${new Date(timestamp * 1_000).toISOString().replace('T', ' ').slice(0, 19)} UTC`;
+const utc = (timestamp: number) => `${formatDisplayTime(timestamp, true)} UTC+8`;
 const countingRule = '按结构结束或事件发生时间计数；跨段结构只计一次，不代表逐根分析覆盖率。统计原始返回结果，不随图层开关变化。';
 
 export function AnalysisCoverage({ analysis, candles }: { analysis: Analysis; candles: readonly Candle[] }) {

@@ -1,3 +1,4 @@
+import { formatDisplayTime } from '../../shared/displayTime';
 import { useEffect, useRef, useState } from 'react';
 import type { RuleIndicatorSnapshot, RuleIndicatorZone } from '../../shared/indicators';
 import { INDICATOR_EXTENSION_BARS } from '../chart/indicatorCoordinates';
@@ -21,7 +22,7 @@ type Props = {
 const statusNames: Record<RuleIndicatorZone['status'], string> = {
   active: '未触及', partial: '部分回补', filled: '已回补', tested: '已测试', invalidated: '已失效',
 };
-const time = (timestamp: number) => new Date(timestamp * 1000).toISOString().replace('T', ' ').slice(0, 16);
+const time = (timestamp: number) => formatDisplayTime(timestamp);
 const price = (value: number) => value > 0 && value < 0.0001 ? value.toString()
   : new Intl.NumberFormat('en-US', { maximumFractionDigits: 20 }).format(value);
 const isHistorical = (zone: RuleIndicatorZone) => zone.status === 'filled' || zone.status === 'invalidated';
@@ -72,7 +73,7 @@ export function RuleIndicatorsPanel({ snapshot, visibility, onVisibilityChange, 
         <p>规则 OB 候选不代表 AI 已认可，也不能证明机构订单。FVG 不保证回补；已回补或失效的区域仅用于历史复核，不作为当前入场依据。</p>
         <small>图表基于已加载的已收盘行情，AI 会按所选快照重算参考。显示开关仅影响图表，不影响 AI 参考。</small>
         <small>色带从形成根起最多延伸 {INDICATOR_EXTENSION_BARS} 根已存在的 K 线，提前回补或失效则提早结束；后续状态仍继续跟踪，不会因色带结束而认定失效。</small>
-        <small>所有时间均为对应 K 线的 UTC 开盘时间；“形成”须等该根收盘后才可知，不能回溯到起源时刻使用。</small>
+        <small>所有时间均为对应 K 线的 UTC+8 开盘时间；“形成”须等该根收盘后才可知，不能回溯到起源时刻使用。</small>
       </div>
       {!snapshot.zones.length ? <p className="rule-indicators-empty">{snapshot.candleCount
         ? '当前已加载行情未识别出符合规则的 FVG 或 OB 候选。可加载更多历史行情后复核。'
@@ -82,18 +83,18 @@ export function RuleIndicatorsPanel({ snapshot, visibility, onVisibilityChange, 
             {displayed.map(zone => <article className={`rule-indicator-row direction-${zone.direction} ${isHistorical(zone) ? 'is-historical' : ''} ${selectedId === zone.id ? 'is-selected' : ''}`}
               key={zone.id} data-rule-indicator-id={zone.id}>
               <button type="button" className="rule-indicator-focus" onClick={() => onSelect(zone.id)} aria-pressed={selectedId === zone.id}
-                aria-label={`定位规则 ${zone.type}${zone.type === 'OB' ? ' 候选' : ''} ${time(zone.formedAt)} UTC`}>
+                aria-label={`定位规则 ${zone.type}${zone.type === 'OB' ? ' 候选' : ''} ${time(zone.formedAt)} UTC+8`}>
                 <span className="rule-indicator-title"><b>{zone.type === 'OB' ? '规则 OB 候选' : '规则 FVG'}</b>
                   <span>{zone.direction === 'bullish' ? '多向' : '空向'}</span><span className={`rule-indicator-status status-${zone.status}`}>{statusNames[zone.status]}</span></span>
                 <strong className="rule-indicator-price" title={`${zone.lowerPrice} – ${zone.upperPrice}`}>{price(zone.lowerPrice)} <i>至</i> {price(zone.upperPrice)} <span aria-hidden="true">↗</span></strong>
-                <span className="rule-indicator-time">形成 {time(zone.formedAt)} UTC · 起源 {time(zone.originTime)} UTC</span>
+                <span className="rule-indicator-time">形成 {time(zone.formedAt)} UTC+8 · 起源 {time(zone.originTime)} UTC+8</span>
               </button>
               {selectedId === zone.id && <div className="rule-indicator-evidence">
                 <p><span>识别依据</span>{zone.rationale}</p>
                 <p><span>失效条件</span>{zone.invalidation}</p>
                 <small>中点 {price(zone.midpoint)}{zone.type === 'FVG' ? ` · 回补 ${(zone.mitigation * 100).toFixed(1)}%` : ''}
-                  {zone.firstTouchTime !== null ? ` · 首次触及 ${time(zone.firstTouchTime)} UTC` : ' · 尚未触及'}
-                  {zone.resolvedTime !== null ? ` · ${zone.status === 'filled' ? '回补' : '失效'} ${time(zone.resolvedTime)} UTC` : ''}</small>
+                  {zone.firstTouchTime !== null ? ` · 首次触及 ${time(zone.firstTouchTime)} UTC+8` : ' · 尚未触及'}
+                  {zone.resolvedTime !== null ? ` · ${zone.status === 'filled' ? '回补' : '失效'} ${time(zone.resolvedTime)} UTC+8` : ''}</small>
               </div>}
             </article>)}
           </div>

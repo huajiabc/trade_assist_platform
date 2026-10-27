@@ -1,0 +1,15 @@
+import { describe,it,expect } from 'vitest';
+import { prepareResearchRequest,clearResearchComputationCache } from '../server/workbench';
+import { researchBundle } from './research-fixtures';
+import { frameInput } from '../src/services/workbench';
+import { RESEARCH_FRAMES } from '../shared/researchData';
+import { updateMarketState,modelContext } from '../shared/marketState';
+import { MICRO_PLAN_POLICY } from '../shared/planPolicy';
+import { modelPayload,modelSystemPrompt } from '../server/provider';
+const body=()=>{const bundle=researchBundle(),context=modelContext(updateMarketState(null,bundle));return {bundle:{symbol:bundle.symbol,asOf:bundle.asOf,frames:RESEARCH_FRAMES.map(tf=>frameInput(bundle.frames[tf]))},previous:context.previous,provider:'mock',notes:'',reviewDepth:'deep' as 'quick'|'deep'};};
+describe('shared scan/deep facts with bounded server reuse',()=>{
+ it('reuses identical verified input across depths without reducing histories or weakening candidates',()=>{clearResearchComputationCache();const raw=body(),deep=prepareResearchRequest(raw),quick=prepareResearchRequest({...raw,reviewDepth:'quick'});expect(deep.preparation.reusedRules).toBe(false);expect(quick.preparation.reusedRules).toBe(true);expect(quick.context.bundle).toEqual(deep.context.bundle);expect(quick.context.facts).toEqual(deep.context.facts);expect(quick.context.candidates).toEqual(deep.context.candidates);for(const tf of RESEARCH_FRAMES)expect(quick.context.bundle.frames[tf].candles).toHaveLength(40);});
+ it('invalidates reuse after OHLCV, provenance or policy changes and never shares mutable cached facts',()=>{clearResearchComputationCache();const raw=body(),first=prepareResearchRequest(raw);first.context.candidates[0].conflicts.push('mutated consumer');const again=prepareResearchRequest(raw);expect(again.context.candidates[0].conflicts).not.toContain('mutated consumer');const changed=structuredClone(raw);changed.bundle.frames[2].candles[0].volume+=1;expect(prepareResearchRequest(changed).preparation.reusedRules).toBe(false);expect(prepareResearchRequest({...raw,planPolicy:MICRO_PLAN_POLICY}).preparation.reusedRules).toBe(false);});
+ it('still validates malformed aggregates and screenshot anchors before accessing the cache',()=>{clearResearchComputationCache();const raw=body();prepareResearchRequest(raw);const invalid=structuredClone(raw);invalid.bundle.frames[0].candles[0].high=1;expect(()=>prepareResearchRequest(invalid)).toThrow();expect(()=>prepareResearchRequest({...raw,inputMode:'hybrid',images:[]})).toThrow();});
+ it('keeps quick AI a user-selected concise review over the same facts and output schema',()=>{const raw=body(),context=prepareResearchRequest({...raw,reviewDepth:'quick'}).context,input={context:{symbol:context.bundle.symbol,timeframe:'1m',notes:''},candles:context.bundle.frames['1m'].candles,workbench:context};expect(modelPayload(input).reviewDepth).toBe('quick');expect(modelSystemPrompt(input)).toContain('保持全部事实和校验');expect(modelPayload(input)).toHaveProperty('facts');});
+});

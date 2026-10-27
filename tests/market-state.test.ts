@@ -127,8 +127,10 @@ describe('versioned market facts, interpretation and plan lifecycle',()=>{
  expect(modelContext(held).previous.positions).toHaveLength(1);expect(modelContext(held).previous.plans).toHaveLength(1);
  const exported=exportResearchState(held);expect(exported.state.snapshots).toEqual(held.snapshots);expect(exported.state.evaluations).not.toEqual([]);expect(exported.state.plans[0].versions).toHaveLength(1);
  });
- it('pauses at capacity rather than silently deleting historical snapshots or events',()=>{
- const s=seeded();s.history=Array.from({length:300},()=>s.history[0]);const next=updateMarketState(s,future([{low:99,high:101,close:100}]));
- expect(next.capacityReached).toBe(true);expect(next.snapshots).toBe(s.snapshots);expect(next.needsReview.join()).toContain('没有静默删除历史');
+ it('recovers a legacy capacity latch and keeps updating with plans and real warnings intact',()=>{
+ const s=saved();s.capacityReached=true;s.needsReview=['5m原始OHLCV被修订或插入，旧解释和计划需重新评估','达到本地会话容量上限，请导出后开始新会话；没有静默删除历史。'];s.history=Array.from({length:300},()=>s.history[0]);
+ const before=structuredClone(s),next=updateMarketState(s,future([{low:99,high:101,close:100}]));
+ expect(next.capacityReached).toBe(false);expect(next.asOf).toBeGreaterThan(s.asOf);expect(next.version).toBe(s.version+1);
+ expect(next.plans[0].versions).toEqual(s.plans[0].versions);expect(next.needsReview.join()).not.toContain('容量上限');expect(s).toEqual(before);
  });
 });

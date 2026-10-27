@@ -18,6 +18,14 @@ const viewport = { width: 200, height: 100 };
 const bounds = { left: 20, top: 10, right: 120, bottom: 50 };
 
 describe('minimal FVG / OB zone labels', () => {
+  it('can reserve the real centered text before painting foreground lines without duplicating its reservation', () => {
+    const h = context(), occupied: { left: number; top: number; width: number; height: number }[] = [];
+    const box = drawZoneLabel(h.ctx, 'FVG', bounds, viewport, occupied, false);
+    expect(box).not.toBeNull(); expect(occupied).toHaveLength(1); expect(h.operations).toEqual([]);
+    expect(drawZoneLabel(h.ctx, 'FVG', bounds, viewport)).toEqual(box);
+    expect(occupied).toHaveLength(1);
+    expect(h.operations.filter(op => op.name === 'fillText')).toHaveLength(1);
+  });
   it.each(['FVG', 'OB'])('draws %s as only small centered text with no badge, border or leader line', text => {
     const h = context();
     const hit = drawZoneLabel(h.ctx, text, bounds, viewport);

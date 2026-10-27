@@ -69,26 +69,33 @@ main { padding: 20px 24px 0; max-width: 1920px; }
 .filter-chip.type-fvg.enabled { background: #20293a; color: #91b3d9; border-color: #344361; }
 .filter-chip.type-ob.enabled { background: #2c2939; color: #b8aed6; border-color: #443b57; }
 .chip-indicator { width: 3px; height: 3px; }
-.chart-shell { background: #131722; }
-.chart-readout { display: block; min-height: 64px; padding: 8px 17px 9px; color: #b2b5be; font-family: 'Segoe UI', sans-serif; font-size: 11px; line-height: 1.6; }
-.chart-instrument-line { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-bottom: 7px; }
+.chart-shell { background: var(--chart-background, #10141c); }
+.chart-shell .chart-readout { display: block; min-height: 60px; padding: 11px 16px 10px; color: #9da9bb; font-family: 'Segoe UI', sans-serif; font-size: 12px; line-height: 1.65; }
+.chart-instrument-line { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-bottom: 6px; }
 .chart-instrument-line > strong { color: #d1d4dc; font-family: 'Segoe UI', sans-serif; font-size: 14px; font-weight: 600; }
 .chart-instrument-line > span:not(.chart-instrument-dot) { color: #9299a8; font-size: 11px; }
 .chart-instrument-dot { width: 6px; height: 6px; border-radius: 50%; background: #2962ff; margin-right: 2px; }
 .chart-instrument-line > .chart-candle-label { margin-left: auto; font-size: 10px; color: #787e89; }
-.chart-ohlc { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; font-family: Arial, 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; }
+.chart-ohlc { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; font-family: Arial, 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; }
 .chart-ohlc b { font-weight: 400; }
-.chart-ohlc > .readout-time { margin-left: auto; color: #9299a8; font-size: 10px; }
-.chart-readout .readout-up, .chart-controls .readout-up { color: #089981; }
-.chart-readout .readout-down, .chart-controls .readout-down { color: #f23645; }
+.chart-ohlc > .readout-time { margin-left: auto; color: #8996aa; font-size: 11px; }
+.chart-readout .readout-up, .chart-controls .readout-up { color: var(--chart-up, #26a69a); }
+.chart-readout .readout-down, .chart-controls .readout-down { color: var(--chart-down, #ef5350); }
 .chart-host { height: 540px; min-height: 420px; }
-.chart-controls { min-height: 33px; padding: 3px 12px; border-top: 1px solid #2a2e39; display: flex; align-items: center; gap: 4px; color: #b2b5be; background: #131722; }
-.chart-control-caption { font-size: 10px; margin-right: auto; color: #9299a8; }
+.chart-controls { min-height: 36px; padding: 4px 12px; border-top: 1px solid #252d3a; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; color: #9da9bb; background: var(--chart-background, #10141c); }
+.chart-control-caption { font-size: 11px; margin-right: auto; color: #9299a8; }
 .chart-control-caption i { font-style: normal; margin-left: 6px; font-variant-numeric: tabular-nums; }
-.chart-control { font-size: 10px; color: #9299a8; background: transparent; border: none; border-radius: 3px; min-height: 25px; padding: 4px 7px; }
+.chart-control { font-size: 11px; color: #9da9bb; background: transparent; border: none; border-radius: 3px; min-height: 27px; padding: 4px 7px; }
 .chart-control:hover { background: #2a2e39; color: #d1d4dc; }
 .chart-control[aria-pressed='true'] { color: #82a5ff; background: #202e4a; }
+.chart-plan-scale { display: inline-flex; align-items: center; gap: 2px; padding: 2px; margin-right: 4px; border: 1px solid #2b3547; border-radius: 4px; }
 .chart-timezone { border-left: 1px solid #363b47; margin-left: 6px; padding-left: 9px; font-size: 10px; color: #b2b5be; }
+.chart-overlay-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px; padding: 7px 14px; border-top: 1px solid #202835; color: #8e9db2; font: 11px/1.5 Arial, 'Segoe UI', sans-serif; }
+.chart-overlay-legend > span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.chart-overlay-legend i { display: inline-block; width: 18px; height: 1px; background: #55b9a4; }
+.chart-overlay-legend .legend-zone { height: 8px; border-radius: 1px; }
+.chart-overlay-legend .legend-candidate i { background: none; width: 6px; height: 6px; margin: 0 4px; border: 1px solid #9da9bb; transform: rotate(45deg); }
+.chart-overlay-legend small { font: inherit; margin-left: auto; color: #728199; }
 .chart-footer { background: #131722; border-color: #2a2e39; min-height: 35px; padding: 9px 15px; }
 .chart-hint { color: #9299a8; }
 .analysis-content { padding: 20px 17px 17px; }

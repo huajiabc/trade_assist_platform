@@ -1,9 +1,12 @@
+import { OpportunityActions } from './components/OpportunityActions';
+import { formatDisplayTime, shortDisplayTime } from '../shared/displayTime';
 import { STRUCTURAL_PLAN_POLICY, MICRO_PLAN_POLICY, planPolicySchema, samePlanPolicy, type PlanPolicy } from '../shared/planPolicy';
 import { AnalysisRunDetails } from './components/AnalysisRunDetails';
 import { captureAnalysisChart } from './chart/analysisCapture';
 import type { AnalysisInputMode, ChartImage } from '../shared/analysisInput';
 import { ResearchSnapshotChart, type ResearchChartFocus } from './components/ResearchSnapshotChart';
 import { ResearchWorkbench, type ResearchController } from './components/ResearchWorkbench';
+import { BinanceAccountSettings } from './components/BinanceAccountSettings';
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import {
   ArrowDown, ArrowUp, ArrowUpRight, ArrowsOutSimple, ChartLine, ChartLineUp,
@@ -40,7 +43,7 @@ import { RuleIndicatorsPanel, visibleRuleIndicatorZones, type RuleIndicatorVisib
 
 const money = formatPrice;
 const compact = (n: number) => Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(n);
-const date = (t: number) => new Date(t * 1000).toISOString().replace('T', ' ').slice(5, 16);
+const date = (t: number) => shortDisplayTime(t);
 const directionText = { bullish: '偏多', bearish: '偏空', neutral: '中性' };
 const sourceNames = { codex: 'Codex 额度', api: 'API Key', mock: '模拟分析' };
 const structureNames: Record<StructureType, string> = { HH: '更高高点', HL: '更高低点', LH: '更低高点', LL: '更低低点', BOS: '结构突破', CHoCH: '特征转变', FVG: '公允价值缺口', OB: '订单块' };
@@ -76,9 +79,10 @@ export default function App() {
   useEffect(()=>{try{localStorage.setItem('plan-policy-v1',JSON.stringify(planPolicy));}catch{/* Retain the current in-memory preference. */}},[planPolicy]);
   const researchController=useRef<ResearchController>(null);
   const [researchStatus,setResearchStatus]=useState({ready:false,busy:false});
-  const [asideView,setAsideView]=useState<'plans'|'structure'>('plans');
+  const [asideView,setAsideView]=useState<'plans'|'structure'|'positions'>('plans');
   const [researchView,setResearchView]=useState<ResearchChartFocus|null>(null);
-  useEffect(()=>setResearchView(null),[dataset.source,dataset.name,dataset.file]);
+  function closeResearchView(){researchController.current?.clearChartFocus();setResearchView(null);}
+  useEffect(()=>closeResearchView(),[dataset.source,dataset.name,dataset.file]);
   const [inputMode,setInputMode]=useState<AnalysisInputMode>('hybrid');
   const [analysisImages,setAnalysisImages]=useState<ChartImage[]>([]);
   const [selectionMode, setSelectionMode] = useState<'auto' | 'manual'>('auto');
@@ -226,7 +230,7 @@ export default function App() {
     const url = new URL(window.location.href); url.searchParams.delete('live'); url.searchParams.delete('interval'); url.searchParams.delete('demo'); window.history.replaceState(null, '', url);
   }
   function connectMarket(query: LiveMarketQuery) {
-    setResearchView(null);
+    closeResearchView();
     fileGeneration.current++;
     const nextDataset: Dataset = { name: query.symbol, file: 'Binance USDⓈ-M', synthetic: false, timeframe: query.interval.toUpperCase(), source: 'live' };
     const nextIdentity = analysisDatasetKey(nextDataset);
@@ -246,7 +250,7 @@ export default function App() {
     if (marketSnapshot) connectMarket({ symbol: marketSnapshot.symbol, interval, limit: 300 });
   }
   function selectStructure(structure: Structure, source: 'chart' | 'list' = 'list') {
-    setResearchView(null);
+    closeResearchView();
     setEvidenceFocusToken(value => value + 1);
     setChartLayers(current => ({ ...current, [['FVG', 'OB'].includes(structure.type) ? 'evidence' : 'primary']: true }));
     setSelectedKeyLevelIndex(null);
@@ -260,7 +264,7 @@ export default function App() {
     if (source === 'list') chartPanelRef.current?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }
   function selectSetup(setup: TradeSetup, source: 'chart' | 'list' = 'list') {
-    setResearchView(null);setAsideView('structure');
+    closeResearchView();setAsideView('structure');
     setChartLayers(current => ({ ...current, plans: true }));
     setSetupFocusToken(value => value + 1);
     setSelectedKeyLevelIndex(null);
@@ -269,7 +273,7 @@ export default function App() {
     if (source === 'list') chartPanelRef.current?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }
   function selectSweep(sweep: LiquiditySweep, source: 'chart' | 'list' = 'list') {
-    setResearchView(null);
+    closeResearchView();
     setEvidenceFocusToken(value => value + 1);
     setChartLayers(current => ({ ...current, evidence: true }));
     setSelectedKeyLevelIndex(null);
@@ -279,7 +283,7 @@ export default function App() {
     if (source === 'list') chartPanelRef.current?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }
   function selectPA(id: string, source: 'chart' | 'list' = 'list') {
-    setResearchView(null);
+    closeResearchView();
     setSelectedKeyLevelIndex(null);
     setSelectedIndicatorId(null);
     const ruleLeg = ruleEvidence.legs.find(leg => leg.id === id);
@@ -300,7 +304,7 @@ export default function App() {
     if (view === 'smc') setSelectedPAId(null);
   }
   function selectIndicator(id: string) {
-    setResearchView(null);
+    closeResearchView();
     setEvidenceFocusToken(value => value + 1);
     setChartLayers(current => ({ ...current, evidence: true }));
     const zone = ruleIndicators.zones.find(item => item.id === id);
@@ -316,7 +320,7 @@ export default function App() {
     if (!visibleRuleIndicatorZones(ruleIndicators, next).some(zone => zone.id === selectedIndicatorId)) setSelectedIndicatorId(null);
   }
   function selectKeyLevel(index: number, source: 'chart' | 'list' = 'list') {
-    setResearchView(null);
+    closeResearchView();
     if (!Number.isInteger(index) || !analysis?.keyLevels[index]) return;
     setEvidenceFocusToken(value => value + 1);
     setChartLayers(current => ({ ...current, primary: true }));
@@ -325,7 +329,7 @@ export default function App() {
     if (source === 'list') chartPanelRef.current?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }
   function resetChart() {
-    setResearchView(null);
+    closeResearchView();
     setSelectedKeyLevelIndex(null);
     setSelectedIndicatorId(null);
     setSelectedId(null); setSelectedSetupId(null); setSelectedSweepId(null); setSelectedPAId(null);
@@ -374,7 +378,7 @@ export default function App() {
   }
   async function analyze() {
     if(researchStatus.busy)return;
-    setAsideView('structure');setResearchView(null);
+    setAsideView('structure');closeResearchView();
     if (!canAnalyze) return;
     setSelectedKeyLevelIndex(null);
     sourceEdited.current = true;
@@ -466,6 +470,12 @@ export default function App() {
     setIsSelectingRange(false);
   }
 
+  const researchIntervalLabel = researchView
+    ? researchView.position && !researchView.position.historical && dataset.source === 'live' && marketSnapshot?.symbol === researchView.frame.symbol
+      ? marketSnapshot.interval.toUpperCase() + ' · 当前持仓'
+      : researchView.frame.timeframe.toUpperCase() + ' · 快照'
+    : '';
+
   return <div className="app-shell">
     <a href="#workspace" className="skip-link">跳转到工作台</a>
     <aside className="nav-rail" aria-label="主导航">
@@ -489,7 +499,6 @@ export default function App() {
           <div className="heading-actions">
             <button className="button secondary" onClick={loadRealMarket} disabled={feed.loading || feed.refreshing}><Database size={17}/>{marketSnapshot && dataset.source === 'live' ? '刷新真实行情' : '加载真实行情'}</button>
             <button className="button secondary" onClick={() => openPanel('import')}><UploadSimple size={17}/>导入 CSV</button>
-            <button className="button primary" aria-label="生成多周期交易计划" onClick={()=>{setAsideView('plans');setResearchView(null);void researchController.current?.run();}} disabled={busy||researchStatus.busy||!researchStatus.ready}><Lightning size={17} weight="fill"/>{researchStatus.busy?'正在评估…':'生成多周期计划'}</button>
           </div>
         </section>
 
@@ -507,7 +516,7 @@ export default function App() {
         <LiveMarketControls initialQuery={initialQuery} snapshot={marketSnapshot} loading={feed.loading} refreshing={feed.refreshing} error={feed.error} autoRefresh={feed.autoRefresh} connected={Boolean(feed.query)} onAutoRefresh={feed.setAutoRefresh} onConnect={connectMarket} onRefresh={feed.refresh} transport={feed.transport} lastEventTime={feed.lastEventTime} streamMessage={feed.streamMessage}/>
 
         <section className="market-strip" aria-label="行情概览">
-          <div className="instrument"><div className="instrument-icon"><ChartLineUp size={24}/></div><div><div className="instrument-name">{dataset.name}<span className="interval">{dataset.timeframe}</span></div><div className="instrument-meta">{dataset.source === 'live' ? 'Binance · USDT 永续' : dataset.synthetic ? '合成示例数据' : 'CSV 本地导入'}<span>·</span>{candles.length} 根 K 线<span>·</span>UTC</div></div></div>
+          <div className="instrument"><div className="instrument-icon"><ChartLineUp size={24}/></div><div><div className="instrument-name">{dataset.name}<span className="interval">{dataset.timeframe}</span></div><div className="instrument-meta">{dataset.source === 'live' ? 'Binance · USDT 永续' : dataset.synthetic ? '合成示例数据' : 'CSV 本地导入'}<span>·</span>{candles.length} 根 K 线<span>·</span>UTC+8</div></div></div>
           <div className="market-stat price-stat"><span>{!latest ? '等待交易所行情' : dataset.source === 'live' && !marketSnapshot?.lastCandleClosed ? '最新成交价 · 未收盘' : '最新收盘价'}</span><strong>{latest ? money(latest.close) : '—'}</strong></div>
           <div className={`market-stat ${change === null ? '' : change >= 0 ? 'positive' : 'negative'}`}><span>较前一根</span><strong>{change === null ? '—' : <>{change >= 0 ? <ArrowUp size={14}/> : <ArrowDown size={14}/>} {Math.abs(change).toFixed(2)}%</>}</strong></div>
           <div className="market-stat range-stat"><span>样本最高 / 最低</span><strong>{high === null || low === null ? '—' : <>{money(high)}<i>/</i>{money(low)}</>}</strong></div>
@@ -516,16 +525,16 @@ export default function App() {
 
         <div className={`workspace-grid ${chartExpanded ? 'chart-expanded' : ''}`}>
           <section ref={chartPanelRef} className="chart-panel panel" aria-label="价格与结构图表">
-            <div className="panel-toolbar chart-topbar"><div className="panel-title"><ChartLine size={19}/><h2>行情图表</h2></div><div className="chart-intervals" aria-label="图表周期">{researchView?<span>{researchView.frame.timeframe.toUpperCase()} · 快照</span>:dataset.source === 'live' ? LIVE_INTERVALS.map(interval => <button key={interval} aria-label={`切换到 ${interval} 周期`} aria-pressed={marketSnapshot?.interval === interval} disabled={feed.loading} onClick={() => changeLiveInterval(interval)}>{interval.toUpperCase()}</button>) : <span>{dataset.timeframe}</span>}</div><div className="chart-tools"><span className={`chart-connection ${feed.transport === 'streaming' && dataset.source === 'live' ? 'is-streaming' : ''}`}>{dataset.source === 'live' ? feed.transport === 'streaming' ? '实时' : feed.transport === 'paused' ? '已暂停' : '同步中' : dataset.synthetic ? 'DEMO' : 'CSV'}</span><button className="icon-button" aria-label="重置图表视图" title="显示近期 K 线" onClick={resetChart}><Pulse size={17}/></button><button className="icon-button" aria-label={chartExpanded ? '退出专注图表' : '专注图表'} aria-pressed={chartExpanded} title="切换专注图表" onClick={() => setChartExpanded(v => !v)}><ArrowsOutSimple size={17}/></button></div></div>
+            <div className="panel-toolbar chart-topbar"><div className="panel-title"><ChartLine size={19}/><h2>行情图表</h2></div><div className="chart-intervals" aria-label="图表周期">{researchView?<span>{researchIntervalLabel}</span>:dataset.source === 'live' ? LIVE_INTERVALS.map(interval => <button key={interval} aria-label={`切换到 ${interval} 周期`} aria-pressed={marketSnapshot?.interval === interval} disabled={feed.loading} onClick={() => changeLiveInterval(interval)}>{interval.toUpperCase()}</button>) : <span>{dataset.timeframe}</span>}</div><div className="chart-tools"><span className={`chart-connection ${feed.transport === 'streaming' && dataset.source === 'live' ? 'is-streaming' : ''}`}>{dataset.source === 'live' ? feed.transport === 'streaming' ? '实时' : feed.transport === 'paused' ? '已暂停' : '同步中' : dataset.synthetic ? 'DEMO' : 'CSV'}</span><button className="icon-button" aria-label="重置图表视图" title="显示近期 K 线" onClick={resetChart}><Pulse size={17}/></button><button className="icon-button" aria-label={chartExpanded ? '退出专注图表' : '专注图表'} aria-pressed={chartExpanded} title="切换专注图表" onClick={() => setChartExpanded(v => !v)}><ArrowsOutSimple size={17}/></button></div></div>
 
             {chartExpanded&&!researchView&&<AnalysisStatus {...taskStatusProps} compact/>}
             {envelope && resultSnapshot && <details className="chart-diagnostics"><summary>分析覆盖与诊断</summary><AnalysisCoverage analysis={envelope.analysis} candles={resultSnapshot.candles}/></details>}
             <div className="analysis-range-toolbar" aria-label="分析 K 线范围">
-              <div className="analysis-range-mode" role="group" aria-label="分析范围方式"><button aria-label="自动范围" aria-pressed={selectionMode === 'auto'} disabled={busy} onClick={() => { setSelectionMode('auto'); setResearchView(null); setIsSelectingRange(false); }}>自动范围</button><button aria-label="手动范围" aria-pressed={selectionMode === 'manual'} disabled={busy} onClick={() => { setSelectionMode('manual'); setResearchView(null); setIsSelectingRange(false); }}>手动范围</button></div>
-              {selectionMode === 'auto' ? <span>自动 · 最近最多 {MAX_ANALYSIS_CANDLES} 根{dataset.source === 'live' ? '已收盘 ' : ''}K 线</span> : <button className={`range-drag-button ${isSelectingRange ? 'is-active' : ''}`} aria-label="在图表拖选范围" aria-pressed={isSelectingRange} disabled={busy || !availableAnalysisCandles.length} onClick={() => {setResearchView(null);setIsSelectingRange(value => !value);}}>{isSelectingRange ? '正在框选 · 再点退出' : '在图表拖选范围'}</button>}
+              <div className="analysis-range-mode" role="group" aria-label="分析范围方式"><button aria-label="自动范围" aria-pressed={selectionMode === 'auto'} disabled={busy} onClick={() => { setSelectionMode('auto'); closeResearchView(); setIsSelectingRange(false); }}>自动范围</button><button aria-label="手动范围" aria-pressed={selectionMode === 'manual'} disabled={busy} onClick={() => { setSelectionMode('manual'); closeResearchView(); setIsSelectingRange(false); }}>手动范围</button></div>
+              {selectionMode === 'auto' ? <span>自动 · 最近最多 {MAX_ANALYSIS_CANDLES} 根{dataset.source === 'live' ? '已收盘 ' : ''}K 线</span> : <button className={`range-drag-button ${isSelectingRange ? 'is-active' : ''}`} aria-label="在图表拖选范围" aria-pressed={isSelectingRange} disabled={busy || !availableAnalysisCandles.length} onClick={() => {closeResearchView();setIsSelectingRange(value => !value);}}>{isSelectingRange ? '正在框选 · 再点退出' : '在图表拖选范围'}</button>}
               <button className="range-drag-button range-analyze-button" aria-label="分析当前 K 线范围" disabled={busy || researchStatus.busy || !canAnalyze} onClick={() => void analyze()}>{busy ? '正在分析…' : selectionMode === 'manual' ? '分析所选范围' : '解读本周期结构'}</button>
-              {selectionMode === 'manual' && <div className="analysis-range-inputs"><label>范围开始 UTC<select aria-label="范围开始 UTC" value={selectedRange?.from ?? ''} disabled={busy || !availableAnalysisCandles.length} onChange={event => updateRangeBoundary('from', Number(event.target.value))}><option value="" disabled>选择起始 K 线</option>{availableAnalysisCandles.map(candle => <option key={candle.timestamp} value={candle.timestamp}>{new Date(candle.timestamp * 1000).toISOString().replace('T', ' ').slice(0, 16)}</option>)}</select></label><label>范围结束 UTC<select aria-label="范围结束 UTC" value={selectedRange?.to ?? ''} disabled={busy || !availableAnalysisCandles.length} onChange={event => updateRangeBoundary('to', Number(event.target.value))}><option value="" disabled>选择结束 K 线</option>{availableAnalysisCandles.map(candle => <option key={candle.timestamp} value={candle.timestamp}>{new Date(candle.timestamp * 1000).toISOString().replace('T', ' ').slice(0, 16)}</option>)}</select></label></div>}
-              <div className={`analysis-range-summary ${rangeError ? 'has-error' : ''}`}>{rangeError || `将分析 ${analysisCandles.length} 根 K 线 · ${date(analysisCandles[0].timestamp)} 至 ${date(analysisCandles.at(-1)!.timestamp)} UTC`}{selectionMode === 'manual' && <small>起止均为实际 K 线开盘时间 · 允许 {MIN_CANDLES}–{MAX_ANALYSIS_CANDLES} 根{dataset.source === 'live' ? '已收盘 K 线' : ' K 线'}</small>}</div>
+              {selectionMode === 'manual' && <div className="analysis-range-inputs"><label>范围开始 UTC+8<select aria-label="范围开始 UTC+8" value={selectedRange?.from ?? ''} disabled={busy || !availableAnalysisCandles.length} onChange={event => updateRangeBoundary('from', Number(event.target.value))}><option value="" disabled>选择起始 K 线</option>{availableAnalysisCandles.map(candle => <option key={candle.timestamp} value={candle.timestamp}>{formatDisplayTime(candle.timestamp)}</option>)}</select></label><label>范围结束 UTC+8<select aria-label="范围结束 UTC+8" value={selectedRange?.to ?? ''} disabled={busy || !availableAnalysisCandles.length} onChange={event => updateRangeBoundary('to', Number(event.target.value))}><option value="" disabled>选择结束 K 线</option>{availableAnalysisCandles.map(candle => <option key={candle.timestamp} value={candle.timestamp}>{formatDisplayTime(candle.timestamp)}</option>)}</select></label></div>}
+              <div className={`analysis-range-summary ${rangeError ? 'has-error' : ''}`}>{rangeError || `将分析 ${analysisCandles.length} 根 K 线 · ${date(analysisCandles[0].timestamp)} 至 ${date(analysisCandles.at(-1)!.timestamp)} UTC+8`}{selectionMode === 'manual' && <small>起止均为实际 K 线开盘时间 · 允许 {MIN_CANDLES}–{MAX_ANALYSIS_CANDLES} 根{dataset.source === 'live' ? '已收盘 K 线' : ' K 线'}</small>}</div>
             </div>
             <div className="hierarchy-layer-bar" role="group" aria-label="视觉层级显示开关">{([{ key: 'primary', label: '主结构', hint: '摆点、破位、趋势腿与支撑阻力' }, { key: 'evidence', label: '辅助证据', hint: 'FVG / OB、扫除与烛线形态' }, { key: 'plans', label: '交易计划', hint: '条件入场、风险区域与目标' }] as const).map(layer => <label key={layer.key} title={layer.hint}><input type="checkbox" aria-label={layer.label} checked={chartLayers[layer.key]} onChange={event => setChartLayers(current => ({ ...current, [layer.key]: event.target.checked }))}/><b>{layer.label}</b></label>)}</div>
             <details className="chart-display-options"><summary>图表显示设置 · PA / SMC / 指标</summary>
@@ -536,7 +545,7 @@ export default function App() {
             </details>
             <div className="single-period-status" hidden={asideView!=='structure'||Boolean(researchView)}><TradePlanStatus tracking={planTracking} rawAnalysis={envelope?.analysis} analysis={analysis} snapshot={resultSnapshot} selectedId={selectedSetupId} layerVisible={showTradeSetups && chartLayers.plans} onSelect={setup => selectSetup(setup, 'chart')} onOpenDetails={() => setTab('opportunities')}/></div>
             <details className="chart-indicator-details" open={!!selectedIndicatorId}><summary>FVG / OB 规则指标</summary><RuleIndicatorsPanel snapshot={ruleIndicators} visibility={indicatorVisibility} onVisibilityChange={changeIndicatorVisibility} selectedId={selectedIndicatorId} onSelect={selectIndicator}/></details>
-            {researchView?<ResearchSnapshotChart key={researchView.frame.id+(researchView.setup?.id??researchView.factId??'')} view={researchView} layers={chartLayers} onClose={()=>setResearchView(null)}/>:candles.length > 0 ? (
+            {researchView?<ResearchSnapshotChart key={researchView.position?researchView.sessionId+researchView.frame.timeframe:researchView.frame.id+(researchView.setup?.id??researchView.factId??'')} view={researchView} layers={chartLayers} marketSnapshot={dataset.source==='live'?marketSnapshot:null} marketError={feed.error} marketPaused={!feed.autoRefresh} onClose={closeResearchView}/>:candles.length > 0 ? (
             <TradingChart evidenceFocusToken={evidenceFocusToken} tradeTracking={planTracking} candles={candles} indicatorZones={chartLayers.evidence ? indicatorZones : []} selectedIndicatorId={selectedIndicatorId} onSelectIndicator={selectIndicator}
               keyLevels={analysis?.keyLevels ?? []} showKeyLevels={showKeyLevels && chartLayers.primary} selectedKeyLevelIndex={selectedKeyLevelIndex} onSelectKeyLevel={index => selectKeyLevel(index, 'chart')}
               structures={chartStructures} visibleTypes={visibleTypes} selectedId={selectedId} onSelect={id => { const s = chartStructures.find(item => item.id === id); if (s) selectStructure(s, 'chart'); }} priceAction={displayedPriceAction} visiblePALayers={{ zones: visiblePALayers.zones && chartLayers.primary, legs: visiblePALayers.legs && chartLayers.primary, patterns: visiblePALayers.patterns && chartLayers.evidence, breakouts: visiblePALayers.breakouts && chartLayers.primary }} showPA={chartView !== 'smc'} showSMC={true} selectedPAId={selectedPAId} onSelectPA={id => selectPA(id, 'chart')} tradeSetups={analysis?.tradeSetups ?? []} liquiditySweeps={analysis?.liquiditySweeps ?? []} showTradeSetups={showTradeSetups && chartLayers.plans && asideView==='structure'} showLiquiditySweeps={showLiquiditySweeps && chartView !== 'pa' && chartLayers.evidence} selectedSetupId={selectedSetupId} setupFocusToken={setupFocusToken} selectedSweepId={selectedSweepId} onSelectSetup={id => { const setup = analysis?.tradeSetups.find(item => item.id === id); if (setup) selectSetup(setup, 'chart'); }} onSelectSweep={id => { const sweep = analysis?.liquiditySweeps.find(item => item.id === id); if (sweep) selectSweep(sweep, 'chart'); }} resetToken={resetToken} datasetKey={`${dataset.source}:${dataset.name}:${dataset.timeframe}:${dataset.file}`} symbol={dataset.name} timeframe={dataset.timeframe} exchange={dataset.source === 'live' ? 'BINANCE' : dataset.synthetic ? '合成示例' : 'CSV'} rangeSelectionEnabled={selectionMode === 'manual' && isSelectingRange} selectedRange={selectionMode === 'manual' ? selectedRange : null} onSelectRange={range => { if (!busy) { setSelectedRange(range); setIsSelectingRange(false); } }} selectableCandles={availableAnalysisCandles} selectionDisabled={busy}/>
@@ -548,8 +557,10 @@ export default function App() {
           </section>
 
           <aside className="analysis-panel panel decision-panel" aria-label="分析结果面板">
-            <div className="decision-tabs" role="tablist" aria-label="工作区视图"><button role="tab" aria-selected={asideView==='plans'} onClick={()=>setAsideView('plans')}>交易计划</button><button role="tab" aria-selected={asideView==='structure'} onClick={()=>setAsideView('structure')}>单周期解读</button></div>
-            <div id="multi-timeframe-research" hidden={asideView!=='plans'}><ResearchWorkbench compact disabled={busy} controllerRef={researchController} onStatus={setResearchStatus} onFocus={view=>{setResearchView(view);setChartLayers(v=>({...v,primary:true,plans:true,evidence:view.factId?true:v.evidence}));chartPanelRef.current?.scrollIntoView({block:'start',behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});}} symbol={dataset.name} source={dataset.source} candles={availableAnalysisCandles} timeframe={dataset.timeframe} marketSnapshot={marketSnapshot} analysisSource={analysisSource} notes={notes} inputMode={inputMode} planPolicy={planPolicy}/></div>
+            <div className="decision-tabs" role="tablist" aria-label="工作区视图"><button role="tab" aria-selected={asideView==='plans'} onClick={()=>setAsideView('plans')}>开仓机会</button><button role="tab" aria-selected={asideView==='positions'} onClick={()=>setAsideView('positions')}>我的持仓</button><button role="tab" aria-selected={asideView==='structure'} onClick={()=>setAsideView('structure')}>单周期解读</button></div>
+            {asideView==='plans'&&<OpportunityActions ready={researchStatus.ready} disabled={busy||researchStatus.busy} simulated={analysisSource==='mock'} onScan={()=>{closeResearchView();void researchController.current?.scan();}} onAnalyze={()=>{closeResearchView();void researchController.current?.run();}}/>}
+            {asideView==='positions'&&<div className="position-purpose"><h2>已有持仓的管理建议</h2><p>选择实际仓位，点击「深度审阅此持仓」。建议显示在该仓位下方；新开仓候选请看「开仓机会」。</p></div>}
+            <div id="multi-timeframe-research" hidden={asideView==='structure'}><ResearchWorkbench compact view={asideView==='positions'?'positions':'plans'} onSymbol={symbol=>{connectMarket({symbol,interval:'1m',limit:300});setAsideView('positions');}} disabled={busy} controllerRef={researchController} onStatus={setResearchStatus} onFocus={view=>{setResearchView(view);if(view.passiveUpdate)return;setChartLayers(v=>({...v,primary:true,plans:true,evidence:view.factId?true:v.evidence}));chartPanelRef.current?.scrollIntoView({block:'start',behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});}} symbol={dataset.name} source={dataset.source} candles={availableAnalysisCandles} timeframe={dataset.timeframe} marketSnapshot={marketSnapshot} analysisSource={analysisSource} notes={notes} inputMode={inputMode} planPolicy={planPolicy}/></div>
             <div hidden={asideView!=='structure'} className="single-period-analysis">
             <div className="panel-toolbar"><div className="panel-title"><Lightning size={18}/><h2>结构解读</h2></div><span className={`source-badge ${envelope?.source === 'ai' ? 'source-ai' : ''}`}>{envelope?.source === 'ai' ? envelope.provider === 'codex' ? 'Codex 分析' : 'API 分析' : envelope ? '模拟分析' : '待分析'}</span></div>
             <AnalysisStatus {...taskStatusProps}/>
@@ -575,7 +586,7 @@ export default function App() {
             <div id="evidence-content" role="tabpanel" aria-labelledby={`${tab}-tab`}>
               {tab === 'pa' ? <PriceActionPanel priceAction={analysis?.priceAction} candles={candles} selectedId={selectedPAId} showCandidates={showCandidates} onSelect={id => selectPA(id)}/> : tab === 'structures' ? <>
                 <RuleStructurePanel evidence={ruleEvidence} selectedId={selectedId} onSelect={selectStructure} onSelectLeg={selectPA}/>
-                <div className="evidence-intro"><span><Info size={14}/>点击条目，定位图表中的时间与价格</span><span>{selected ? `已定位 ${selected.type} · ${date(selected.startTime)} UTC` : '实线已确认 / 虚线候选'}</span></div>
+                <div className="evidence-intro"><span><Info size={14}/>点击条目，定位图表中的时间与价格</span><span>{selected ? `已定位 ${selected.type} · ${date(selected.startTime)} UTC+8` : '实线已确认 / 虚线候选'}</span></div>
                 <div className="structure-list">{displayed.length === 0 ? <div className="list-empty">{analysis ? '当前图层下没有结构。可开启其他类型或显示候选结构。' : '完成分析后，结构与识别依据将在这里展示。'}</div> : displayed.map(s => <button id={`structure-${s.id}`} key={s.id} className={`structure-row ${selectedId === s.id ? 'is-selected' : ''}`} onClick={() => selectStructure(s)} aria-label={`定位 ${s.type} ${structureNames[s.type]}`} aria-pressed={selectedId === s.id}>
                   <div className="structure-type"><span className={`type-badge type-${s.type.toLowerCase()}`}>{s.type}</span><span className="structure-long-name">{structureNames[s.type]}</span></div>
                   <div className="structure-evidence"><p>{s.rationale}</p><small><span>失效条件</span>{s.invalidation}</small></div>
@@ -587,7 +598,7 @@ export default function App() {
           </section>
         </div>
 
-        <footer className="workspace-footer"><span><ShieldCheck size={14}/>仅用于行情研究。AI 与模拟判断均可能出错，不构成交易指令。</span><span>{candles.length && latest ? `${date(candles[0].timestamp)} 至 ${date(latest.timestamp)} UTC` : '尚未收到交易所行情'}<span className="footer-dot">·</span>{connectionError ? '后端服务未连接' : `${resultSource} · 手动分析`}</span></footer>
+        <footer className="workspace-footer"><span><ShieldCheck size={14}/>仅用于行情研究。AI 与模拟判断均可能出错，不构成交易指令。</span><span>{candles.length && latest ? `${date(candles[0].timestamp)} 至 ${date(latest.timestamp)} UTC+8` : '尚未收到交易所行情'}<span className="footer-dot">·</span>{connectionError ? '后端服务未连接' : `${resultSource} · 手动分析`}</span></footer>
       </main>
     </div>
 
@@ -597,9 +608,9 @@ export default function App() {
       {panel === 'import' ? <>
         <button className="upload-area" onClick={() => fileRef.current?.click()} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); const file = e.dataTransfer.files[0]; if (file) void importFile(file); }}><div className="upload-icon"><UploadSimple size={28}/></div><strong>拖拽 CSV 到这里，或点击选择文件</strong><span>最多 {MAX_CANDLES.toLocaleString()} 根 K 线 · 文件上限 2 MB</span></button>
         <div className="csv-guide"><div><FileCsv size={18}/><h3>OHLCV 数据格式</h3></div><code>timestamp,open,high,low,close,volume</code><p>时间需严格递增，支持 Unix 秒 / 毫秒或带时区的 ISO 8601。缺失值、重复时间和不合法的价格会被拒绝；不会自动填补行情。</p><a href="/sample-ohlcv.csv" download><DownloadSimple size={16}/>下载合成示例 CSV</a><a href="/pa-example.csv" download><DownloadSimple size={16}/>下载 PA 教学 CSV</a></div>
-        <div className="current-dataset"><Database size={19}/><div><strong>{dataset.file}</strong><span>当前数据 · {candles.length} 根 · {dataset.timeframe} · UTC</span></div><span className="source-badge">{dataset.synthetic ? '合成数据' : dataset.source === 'live' ? candles.length ? '交易所行情' : '等待连接' : '已导入'}</span></div>
+        <div className="current-dataset"><Database size={19}/><div><strong>{dataset.file}</strong><span>当前数据 · {candles.length} 根 · {dataset.timeframe} · UTC+8</span></div><span className="source-badge">{dataset.synthetic ? '合成数据' : dataset.source === 'live' ? candles.length ? '交易所行情' : '等待连接' : '已导入'}</span></div>
         <div className="sample-choice"><button className="button secondary full-width" onClick={() => loadSample(true)}><Pulse size={17}/>加载 PA 教学示例与模拟分析</button><button className="button secondary full-width" onClick={() => loadSample()}><ChartLine size={17}/>加载示例数据与模拟分析</button></div>
-      </> : <><div className="connection-card"><span className={`status-dot ${health?.codex?.authenticated ? '' : 'status-muted'}`}/><div><strong>{health?.codex?.authenticated ? 'Codex 订阅已连接' : connectionError ? '后端服务未连接' : 'Codex 登录状态'}</strong><span>{health?.codex?.message || '正在检查本机 Codex 与 ChatGPT 登录状态。'}</span></div><button className="button text-button" disabled={checkingHealth} onClick={() => void refreshHealth()}>{checkingHealth ? '检查中…' : '刷新状态'}</button></div><label className="field-label" htmlFor="symbol-name">标的名称</label><input className="text-field" id="symbol-name" readOnly={dataset.source === 'live'} maxLength={60} value={symbolDraft} onChange={e => setSymbolDraft(e.target.value)} /><label className="field-label" htmlFor="analysis-mode">分析模式</label><select id="analysis-mode" value={analysisSource} disabled={busy} onChange={e => chooseSource(e.target.value as AnalysisSource)}><option value="codex">Codex 额度：使用本机 ChatGPT 登录</option><option value="api">API Key：使用服务端配置，API 单独计费</option><option value="mock">模拟分析：本地规则，不消耗模型额度</option></select><fieldset className="plan-policy-settings"><legend>计划幅度筛选（不是自动拉远价格）</legend><label>最小保护幅度 %<input aria-label="最小保护幅度百分比" type="number" min="0" max="10" step="0.05" disabled={busy} value={planPolicy.minRiskPct} onChange={e=>{const value=Number(e.target.value);if(Number.isFinite(value)&&value>=0&&value<=10)setPlanPolicy(p=>({...p,minRiskPct:value}));}}/></label><label>最小首目标幅度 %<input aria-label="最小首目标幅度百分比" type="number" min="0" max="20" step="0.1" disabled={busy} value={planPolicy.minTargetPct} onChange={e=>{const value=Number(e.target.value);if(Number.isFinite(value)&&value>=0&&value<=20)setPlanPolicy(p=>({...p,minTargetPct:value}));}}/></label><p>结构波段还要求至少0.75倍参考ATR保护、1.25倍ATR目标和1.5R；优先5m主要保护。1m输入只按完整分组聚合5m。门槛只筛选真实结构，主要目标使用已确认15m结构；5m途中阻挡独立展示，1R内主要阻挡需先处理。旧分析与计划不会自动改价。</p></fieldset><label className="field-label" htmlFor="analysis-notes">分析上下文（可选）</label><textarea id="analysis-notes" rows={3} maxLength={1000} value={notes} onChange={e => setNotes(e.target.value)} placeholder="例如：关注最近一段行情的结构变化与失效条件"/><p className="field-help">真实行情的标的与周期在行情栏切换，未收盘末根不参与分析。CSV 周期由时间间隔推断；每次最多发送最近 {MAX_ANALYSIS_CANDLES} 根 K 线与上下文。</p><div className="config-note"><Code size={18}/><div><strong>Codex 登录与 API 配置</strong><p aria-label="Codex 分析调用参数">服务端调用配置：{health?.codexSettings?.model ?? '未读取'} · effort {health?.codexSettings?.reasoningEffort ?? 'CLI 默认'} · {health?.codexSettings?.serviceTier === 'fast' ? 'Fast 快速模式' : 'CLI 默认速度'}。仅对后续 Codex 分析生效。</p><p>Codex 使用本机 CLI 的 ChatGPT 登录。尚未登录时，在项目终端运行 <code>npx codex login</code>，完成后刷新状态。</p><code>AI_API_KEY · AI_BASE_URL · AI_MODEL</code><p>API Key 仅保存在服务端。分析失败会显示错误，不会自动切换计费来源。仅点击分析按钮时调用模型，实时行情更新不会自动消耗额度。</p></div></div><button className="button primary full-width" onClick={saveSettings}><Check size={17}/>完成设置</button></>}
+      </> : <><BinanceAccountSettings/><div className="connection-card"><span className={`status-dot ${health?.codex?.authenticated ? '' : 'status-muted'}`}/><div><strong>{health?.codex?.authenticated ? 'Codex 订阅已连接' : connectionError ? '后端服务未连接' : 'Codex 登录状态'}</strong><span>{health?.codex?.message || '正在检查本机 Codex 与 ChatGPT 登录状态。'}</span></div><button className="button text-button" disabled={checkingHealth} onClick={() => void refreshHealth()}>{checkingHealth ? '检查中…' : '刷新状态'}</button></div><label className="field-label" htmlFor="symbol-name">标的名称</label><input className="text-field" id="symbol-name" readOnly={dataset.source === 'live'} maxLength={60} value={symbolDraft} onChange={e => setSymbolDraft(e.target.value)} /><label className="field-label" htmlFor="analysis-mode">分析模式</label><select id="analysis-mode" value={analysisSource} disabled={busy} onChange={e => chooseSource(e.target.value as AnalysisSource)}><option value="codex">Codex 额度：使用本机 ChatGPT 登录</option><option value="api">API Key：使用服务端配置，API 单独计费</option><option value="mock">模拟分析：本地规则，不消耗模型额度</option></select><fieldset className="plan-policy-settings"><legend>计划幅度筛选（不是自动拉远价格）</legend><label>最小保护幅度 %<input aria-label="最小保护幅度百分比" type="number" min="0" max="10" step="0.05" disabled={busy} value={planPolicy.minRiskPct} onChange={e=>{const value=Number(e.target.value);if(Number.isFinite(value)&&value>=0&&value<=10)setPlanPolicy(p=>({...p,minRiskPct:value}));}}/></label><label>最小首目标幅度 %<input aria-label="最小首目标幅度百分比" type="number" min="0" max="20" step="0.1" disabled={busy} value={planPolicy.minTargetPct} onChange={e=>{const value=Number(e.target.value);if(Number.isFinite(value)&&value>=0&&value<=20)setPlanPolicy(p=>({...p,minTargetPct:value}));}}/></label><p>结构波段还要求至少0.75倍参考ATR保护、1.25倍ATR目标和1.5R；优先5m主要保护。1m输入只按完整分组聚合5m。门槛只筛选真实结构，主要目标使用已确认15m结构；5m途中阻挡独立展示，1R内主要阻挡需先处理。旧分析与计划不会自动改价。</p></fieldset><label className="field-label" htmlFor="analysis-notes">分析上下文（可选）</label><textarea id="analysis-notes" rows={3} maxLength={1000} value={notes} onChange={e => setNotes(e.target.value)} placeholder="例如：关注最近一段行情的结构变化与失效条件"/><p className="field-help">真实行情的标的与周期在行情栏切换，未收盘末根不参与分析。CSV 周期由时间间隔推断；每次最多发送最近 {MAX_ANALYSIS_CANDLES} 根 K 线与上下文。</p><div className="config-note"><Code size={18}/><div><strong>Codex 登录与 API 配置</strong><p aria-label="Codex 分析调用参数">服务端调用配置：{health?.codexSettings?.model ?? '未读取'} · effort {health?.codexSettings?.reasoningEffort ?? 'CLI 默认'} · {health?.codexSettings?.serviceTier === 'fast' ? 'Fast 快速模式' : 'CLI 默认速度'}。仅对后续 Codex 分析生效。</p><p>Codex 使用本机 CLI 的 ChatGPT 登录。尚未登录时，在项目终端运行 <code>npx codex login</code>，完成后刷新状态。</p><code>AI_API_KEY · AI_BASE_URL · AI_MODEL</code><p>API Key 仅保存在服务端。分析失败会显示错误，不会自动切换计费来源。仅点击分析按钮时调用模型，实时行情更新不会自动消耗额度。</p></div></div><button className="button primary full-width" onClick={saveSettings}><Check size={17}/>完成设置</button></>}
       {error && <div className="dialog-error" role="alert"><WarningCircle size={17}/>{error}</div>}
     </dialog>
     {busy && analysisTask.snapshot && <div className="analysis-progress" role="status"><SpinnerGap className="spin" size={18}/><div><strong>{sourceNames[analysisTask.snapshot.source]} · 正在分析 {analysisTask.snapshot.candles.length} 根 K 线</strong><span>已等待 {elapsedSeconds} 秒 · 使用固定行情快照 · 校验通过后显示</span></div><button onClick={() => cancelAnalysis()}>取消</button></div>}

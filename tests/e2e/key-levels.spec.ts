@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, showChartSettings } from './fixtures';
 import type { Page } from '@playwright/test';
 import { createMockAnalysis } from '../../shared/mock';
 import { SAMPLE_CANDLES } from '../../shared/sample';
@@ -42,6 +42,7 @@ async function load(page: Page) {
     }) });
   });
   await page.goto('/?live=SNDKUSDT&interval=1m');
+  await showChartSettings(page);
   await expect(page.locator('.price-stat strong')).not.toHaveText('—');
   await page.getByRole('checkbox', { name: '实时更新', exact: true }).uncheck();
   const analyze = page.getByRole('button', { name: '分析当前 K 线范围', exact: true });

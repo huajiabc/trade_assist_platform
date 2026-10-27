@@ -1,0 +1,6 @@
+import { normalizeAccount } from '../shared/account';
+export const accountCredentials={apiKey:'fixture-binance-api-key-not-real',secret:'fixture-binance-secret-not-real'};
+export const accountRow=(overrides:Record<string,unknown>={})=>({symbol:'SNDKUSDT',positionSide:'BOTH',positionAmt:'2',entryPrice:'98',markPrice:'100',unRealizedProfit:'4',leverage:'5',marginType:'isolated',isolatedMargin:'40',liquidationPrice:'82',updateTime:Date.now(),...overrides});
+export const accountData=(risks:Record<string,unknown>[]=[accountRow()])=>({assets:[{asset:'USDT',walletBalance:'1000',availableBalance:'800',unrealizedProfit:'4',marginBalance:'1004'}],positions:risks.map(r=>({symbol:r.symbol,positionSide:r.positionSide,positionAmt:r.positionAmt,positionInitialMargin:'40'}))});
+export const exchangeInfo={symbols:[{symbol:'SNDKUSDT',contractType:'PERPETUAL',baseAsset:'SNDK',quoteAsset:'USDT',marginAsset:'USDT'}]};
+export function accountSnapshot(now=Date.now(),risks=[accountRow()]){return normalizeAccount({account:accountData(risks),risks,mode:{dualSidePosition:risks.some(r=>r.positionSide!=='BOTH')},exchangeInfo,accountRef:'fixture-account',snapshotId:'account-fixture',syncedAt:now,exchangeTime:now});}

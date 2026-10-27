@@ -112,7 +112,9 @@ test('loads exchange data, excludes unclosed candle from analysis, and preserves
   await page.goto('/?live=SNDKUSDT&interval=1h');
   await expect(page.locator('.instrument-name')).toContainText('SNDKUSDT');
   await expect(page.locator('.live-market-status')).toContainText('末根未收盘');
-  await expect(page.locator('.empty-state')).toBeVisible();
+  await expect(page.locator('.chart-host')).toBeVisible();
+  await expect(page.locator('.source-badge').first()).toHaveText('待分析');
+  await expect(page.locator('.structure-row, .pa-evidence-card')).toHaveCount(0);
   const analysisRequest = page.waitForRequest('**/api/analyze');
   await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   const sent = (await analysisRequest).postDataJSON();
@@ -156,18 +158,24 @@ test('closed-history corrections retain a reviewable stale analysis; forming-onl
 
 test('loads actual SNDKUSDT public market when explicitly enabled', async ({ page }) => {
   test.skip(process.env.LIVE_MARKET_SMOKE !== '1', 'External connectivity check is opt-in; normal tests use fixtures.');
+  await page.setViewportSize({ width: 1680, height: 1100 });
   const errors: string[] = [];
+  let analysisRequests = 0;
   page.on('pageerror', error => errors.push(error.message));
-  await page.goto('/?live=SNDKUSDT&interval=1h');
+  page.on('request', request => { if (/\/api\/(analyze|research\/analyze)$/.test(new URL(request.url()).pathname)) analysisRequests++; });
+  await page.goto('/?live=SNDKUSDT&interval=1m');
   await expect(page.locator('.instrument-name')).toContainText('SNDKUSDT', { timeout: 20_000 });
   await expect(page.locator('.instrument-meta')).toContainText('Binance');
   await expect(page.locator('.live-market-status')).toContainText('股票永续');
   await expect(page.locator('.chart-host canvas').first()).toBeVisible();
-  await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
-  await expect(page.getByRole('status').filter({ hasText: '分析完成' })).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('.price-stat strong')).not.toHaveText('—');
+  await expect(page.getByLabel('结构绘图图例', { exact: true })).toBeVisible();
+  await page.mouse.move(0, 0);
+  await page.locator('.chart-shell').screenshot({ path: 'artifacts/sndk-chart-restyle.png' });
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: 'test-results/sndkusdt-real-market.png', fullPage: true });
   expect(errors).toEqual([]);
+  expect(analysisRequests).toBe(0);
 });
 
 

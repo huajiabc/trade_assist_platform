@@ -139,7 +139,9 @@ describe('model FVG and OB display extension', () => {
   it.each(['BOS', 'CHoCH'] as const)('preserves %s event endpoints and price autoscale across the complete event', type => {
     const h = harness(); const source = structure({ type, priceEnd: null });
     h.overlay.setData([source], source.id, candles); h.draw('bottom'); h.draw('top');
-    expect(h.context.fillRect).toHaveBeenCalledWith(90, 237, 360, 6);
+    // The selected event has a quieter 4px emphasis, at the same price and
+    // complete origin-to-confirmation extent (zone caps never affect breaks).
+    expect(h.context.fillRect).toHaveBeenCalledWith(90, 238, 360, 4);
     expect(h.scale.timeToCoordinate).toHaveBeenCalledWith(candles[20].timestamp);
     expect(h.overlay.autoscaleInfo(15 as Logical, 20 as Logical)?.priceRange).toEqual({ minValue: 80, maxValue: 80 });
   });
@@ -147,7 +149,7 @@ describe('model FVG and OB display extension', () => {
   it('keeps a swing point visible with no candle list, independently of zone caps', () => {
     const h = harness(); const source = structure({ type: 'HH', priceEnd: null });
     h.overlay.setData([source], null); h.draw('top');
-    expect(h.context.arc).toHaveBeenCalledWith(90, 240, 2, 0, Math.PI * 2);
+    expect(h.context.arc).toHaveBeenCalledWith(90, 240, 1.6, 0, Math.PI * 2);
     expect(h.overlay.hitTest(90, 240)?.externalId).toBe(source.id);
   });
 });

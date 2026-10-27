@@ -4,12 +4,14 @@ import type { PAZone, PALeg, PAPattern, PABreakout, PriceAction } from '../../sh
 import { formatPrice } from '../../shared/format';
 import type { Viewport } from './coordinates';
 import { ChartLabelRegistry, labelDensity, placeLabel, type LabelBox } from './labelLayout';
+import { CHART_THEME } from './chartTheme';
+import { horizontalStroke, labelSurface } from './drawingStyle';
 import { ALL_PA_LAYERS, distanceToPAGeometry, findPAItem, mapPABreakout, mapPALeg, mapPAPattern, mapPAZone, paItemBounds,
   type PAGeometry, type PAItem, type PALayerVisibility, type PAPoint } from './priceActionCoordinates';
 
 type Target = Parameters<IPrimitivePaneRenderer['draw']>[0];
 interface DrawItem { item: PAItem; geometry: PAGeometry }
-const TEAL = '#36c7b4', CORAL = '#ff8a8a', BLUE = '#6ba9ff', GOLD = '#e6b66c';
+const TEAL = CHART_THEME.bullish, CORAL = CHART_THEME.bearish, BLUE = CHART_THEME.blue, GOLD = CHART_THEME.gold;
 const shortTitle = (value: string, max = 16) => [...value].length > max ? [...value].slice(0, max).join('') + '…' : value;
 
 /** PA evidence is rendered as native chart geometry, never generated imagery. */
@@ -105,6 +107,9 @@ export class PriceActionOverlay implements ISeriesPrimitive {
           || this.endTime(b.item) - this.endTime(a.item));
         for (const entry of ordered) {
           if (entry.item.id !== this.selectedId && (occupied.length - inherited >= density.auxiliary + density.main / 2 || (!density.showLocal && !('lowerPrice' in entry.item) && !('startPrice' in entry.item)))) continue;
+          // Percent badges and local pattern names are inspection detail. The
+          // price legs themselves remain on the chart at the structure zoom.
+          if (entry.item.id !== this.selectedId && density.mode !== 'detail' && ['leg', 'pattern'].includes(entry.geometry.kind)) continue;
           ctx.save(); ctx.globalAlpha = (this.selectedId || this.dimmed) && entry.item.id !== this.selectedId ? .45 : 1;
           this.drawLabel(ctx, entry, occupied); ctx.restore();
         }
@@ -135,7 +140,9 @@ export class PriceActionOverlay implements ISeriesPrimitive {
         gradient.addColorStop(1, this.alpha(color, selected ? .19 : .1));
         ctx.fillStyle = gradient; ctx.fillRect(x1, top, x2 - x1, bottom - top);
       } else {
-        ctx.strokeRect(x1, top, x2 - x1, bottom - top);
+        ctx.strokeStyle = this.alpha(color, selected ? .9 : .38);
+        horizontalStroke(ctx, x1, x2, top);
+        horizontalStroke(ctx, x1, x2, bottom);
         if (zone.kind === 'trading-range') {
           ctx.save(); ctx.globalAlpha *= .35; ctx.setLineDash([2, 5]);
           ctx.beginPath(); ctx.moveTo(x1, (top + bottom) / 2); ctx.lineTo(x2, (top + bottom) / 2); ctx.stroke(); ctx.restore();
@@ -146,25 +153,27 @@ export class PriceActionOverlay implements ISeriesPrimitive {
           }
         }
         ctx.setLineDash([]);
-        for (const p of geometry.touches) {
-          ctx.fillStyle = '#131722'; ctx.beginPath(); ctx.arc(p.x, p.y, selected ? 4 : 3, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        for (const p of selected ? geometry.touches : []) {
+          ctx.fillStyle = CHART_THEME.background; ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
           ctx.fillStyle = color; ctx.beginPath(); ctx.arc(p.x, p.y, 1, 0, Math.PI * 2); ctx.fill();
         }
       }
     } else if (geometry.kind === 'leg') {
       const leg = item as PALeg;
       const { start, end } = geometry;
-      const angle = Math.atan2(end.y - start.y, end.x - start.x), width = selected ? 7 : 5;
-      if (background) {
+      const angle = Math.atan2(end.y - start.y, end.x - start.x), width = 3;
+      if (background && selected) {
         const nx = Math.sin(angle) * width, ny = -Math.cos(angle) * width;
         ctx.fillStyle = this.alpha(color, leg.kind === 'impulse' ? .15 : .075);
         ctx.beginPath(); ctx.moveTo(start.x + nx, start.y + ny); ctx.lineTo(end.x + nx, end.y + ny);
         ctx.lineTo(end.x - nx, end.y - ny); ctx.lineTo(start.x - nx, start.y - ny); ctx.closePath(); ctx.fill();
-      } else {
+      } else if (!background) {
         if (leg.kind === 'pullback' || item.status === 'candidate') ctx.setLineDash([5, 4]);
-        ctx.lineWidth = selected ? 2 : 1.3; ctx.beginPath(); ctx.moveTo(start.x, start.y); ctx.lineTo(end.x, end.y); ctx.stroke();
-        ctx.setLineDash([]); this.arrow(ctx, start, end, selected ? 9 : 7);
-        for (const p of [start, end]) { ctx.fillStyle = item.status === 'confirmed' ? color : '#131722'; ctx.beginPath(); ctx.arc(p.x, p.y, selected ? 3.5 : 2.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+        ctx.lineWidth = selected ? 1.8 : 1.15;
+        ctx.strokeStyle = this.alpha(color, selected ? 1 : .72);
+        ctx.beginPath(); ctx.moveTo(start.x, start.y); ctx.lineTo(end.x, end.y); ctx.stroke();
+        ctx.setLineDash([]); if (selected) this.arrow(ctx, start, end, 6);
+        for (const p of [start, end]) { ctx.fillStyle = item.status === 'confirmed' ? color : CHART_THEME.background; ctx.beginPath(); ctx.arc(p.x, p.y, selected ? 3 : 1.6, 0, Math.PI * 2); ctx.fill(); if (selected || item.status === 'candidate') ctx.stroke(); }
       }
     } else if (geometry.kind === 'pattern') {
       const width = this.barWidth(), left = geometry.x1 - width / 2 - 4, right = geometry.x2 + width / 2 + 4;
@@ -229,26 +238,27 @@ export class PriceActionOverlay implements ISeriesPrimitive {
       x = last.x + 10; y = last.y + (breakout.direction === 'bullish' ? -40 : 40);
       anchor = last;
     }
-    text += item.status === 'candidate' ? ' ◇候选' : '';
+    text += item.status === 'candidate' ? ' ◇' : '';
     if (selected) text = shortTitle(item.title, 14) + ' · ' + text;
     this.tag(ctx, text, x, y, color, item.id, occupied, selected, anchor);
   }
 
   private tag(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, color: string, id: string, occupied: LabelBox[], essential: boolean, anchor: { x: number; y: number }): void {
-    ctx.save(); ctx.font = `${essential ? 600 : 500} 10px Arial, "Segoe UI", sans-serif`;
-    const width = Math.min(this.viewport.width - 8, ctx.measureText(text).width + 14);
+    ctx.save(); ctx.font = `${essential ? 600 : 500} 11px Arial, "Segoe UI", sans-serif`;
+    const width = Math.min(this.viewport.width - 8, ctx.measureText(text).width + 12);
     const left = Math.max(4, Math.min(x, this.viewport.width - width - 4));
     const top = Math.max(3, Math.min(y - 9, this.viewport.height - 23));
-    const box = placeLabel({ left, top, width, height: 20 }, this.viewport, occupied, essential);
+    const box = placeLabel({ left, top, width, height: 18 }, this.viewport, occupied, essential);
     if (box) {
       const closestX = Math.max(box.left, Math.min(anchor.x, box.left + box.width));
       const closestY = Math.max(box.top, Math.min(anchor.y, box.top + box.height));
-      ctx.strokeStyle = this.alpha(color, .5); ctx.lineWidth = .8; ctx.setLineDash([]);
-      ctx.beginPath(); ctx.moveTo(anchor.x, anchor.y); ctx.lineTo(closestX, closestY); ctx.stroke();
-      ctx.fillStyle = essential ? '#263043' : 'rgba(19,23,34,.96)'; ctx.fillRect(box.left, box.top, box.width, box.height);
-      ctx.strokeStyle = this.alpha(color, essential ? .9 : .4); ctx.strokeRect(box.left, box.top, box.width, box.height);
+      if (essential || Math.abs(closestY - anchor.y) > 20) {
+        ctx.strokeStyle = this.alpha(color, .3); ctx.lineWidth = .75; ctx.setLineDash([]);
+        ctx.beginPath(); ctx.moveTo(anchor.x, anchor.y); ctx.lineTo(closestX, closestY); ctx.stroke();
+      }
+      labelSurface(ctx, box, essential);
       ctx.fillStyle = color; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-      ctx.fillText(text, box.left + 7, box.top + 10, box.width - 14);
+      ctx.fillText(text, box.left + 6, box.top + 9, box.width - 12);
       this.labels.push({ id, box });
     }
     ctx.restore();

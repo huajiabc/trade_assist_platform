@@ -10,6 +10,8 @@ import { invalidModelOutput, PublicError } from './errors';
 import { buildRuleIndicatorReference } from '../shared/indicatorReference';
 import { tradeRiskContext } from '../shared/tradeRisk';
 import { extractStructureEvidence, selectStructureReferences, analysisBudgets } from '../shared/structureEvidence';
+import { buildMarketContext, MARKET_CONTEXT_INSTRUCTIONS } from '../shared/marketContext';
+import { positionAdviceJsonSchema, POSITION_REVIEW_PROMPT, type PositionManagementContext } from '../shared/positionManagement';
 
 export interface AnalysisContext {
   symbol: string;
@@ -24,6 +26,7 @@ export interface ScreenshotInput {
 }
 
 export interface ModelInput {
+  positionReview?:PositionManagementContext;
   workbench?: WorkbenchModelContext;
   planPolicy?: PlanPolicy;
   candles: Candle[];
@@ -118,22 +121,23 @@ export function buildAnalysisPayload(input: ModelInput) {
       forceSetup: false,
     },
     context: input.context,
+    marketContext: buildMarketContext(input.candles, input.context.symbol, input.context.timeframe),
     candles: input.candles,
     ...(input.validationFeedback ? { validationFeedback: input.validationFeedback } : {}),
   };
 }
 
 export function validateModelVisuals(input:ModelInput){if(!input.visuals?.length)return;validateImageAnchors('hybrid',input.visuals,input.workbench?Object.values(input.workbench.bundle.frames):[{symbol:input.context.symbol,timeframe:input.context.timeframe,candles:input.candles}]);for(const image of input.visuals)chartImageBytes(image);}
-export const modelOutputSchema = (input:ModelInput) => input.workbench ? workbenchJsonSchema : analysisJsonSchema;
-export const modelSystemPrompt = (input:ModelInput) => (input.workbench ? WORKBENCH_PROMPT : SYSTEM_PROMPT)+(input.visuals?.length?'\n'+HYBRID_INSTRUCTIONS:'');
+export const modelOutputSchema = (input:ModelInput) => input.positionReview ? positionAdviceJsonSchema : input.workbench ? workbenchJsonSchema : analysisJsonSchema;
+export const modelSystemPrompt = (input:ModelInput) => (input.positionReview?POSITION_REVIEW_PROMPT:input.workbench ? WORKBENCH_PROMPT : SYSTEM_PROMPT)+'\n'+MARKET_CONTEXT_INSTRUCTIONS+(input.workbench?.reviewDepth==='quick'?'\n本次为用户主动的轻量审阅：保持全部事实和校验，简洁概括重要变化、矛盾、候选取舍及下一未满足条件，不逐项重复已有事实。':'')+(input.visuals?.length?'\n'+HYBRID_INSTRUCTIONS:'');
 export function modelPayload(input:ModelInput):Record<string,unknown>{
- const payload=input.workbench ? { ...workbenchPayload(input.workbench), context: input.context, ...(input.validationFeedback?{validationFeedback:input.validationFeedback}:{}) } : buildAnalysisPayload(input);
+ const payload=input.workbench ? { ...workbenchPayload(input.workbench), context: input.context, ...(input.positionReview?{management:input.positionReview}:{}), ...(input.validationFeedback?{validationFeedback:input.validationFeedback}:{}) } : buildAnalysisPayload(input);
  if(!input.visuals?.length)return payload;
  const images=imageManifest(input.visuals);
  if(!input.workbench)return {...payload,candleColumns:CANDLE_COLUMNS,candles:candleRows(input.candles),images};
  const full=workbenchPayload(input.workbench),frames=Object.fromEntries(Object.entries(full.bundle.frames).map(([tf,frame])=>[tf,{...frame,candles:candleRows(frame.candles)}]));
  const facts=full.facts.map(({rationale:_r,invalidation:_i,...fact})=>fact);
- return {...full,context:input.context,bundle:{...full.bundle,frames},facts,candleColumns:CANDLE_COLUMNS,images,...(input.validationFeedback?{validationFeedback:input.validationFeedback}:{})};
+ return {...full,context:input.context,bundle:{...full.bundle,frames},facts,candleColumns:CANDLE_COLUMNS,images,...(input.positionReview?{management:input.positionReview}:{}),...(input.validationFeedback?{validationFeedback:input.validationFeedback}:{})};
 }
 
 async function readBoundedResponse(response: Response): Promise<unknown> {

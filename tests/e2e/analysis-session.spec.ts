@@ -77,7 +77,7 @@ test('a new closed bar cannot cancel a pending analysis or erase its frozen-snap
   await expect(page.locator('.analysis-provenance')).toContainText('session-test-model');
   await expect(page.getByLabel('分析任务状态')).toHaveClass(/phase-success/);
   await expect(page.getByLabel('分析任务状态')).toContainText('行情已更新，当前结果需复核');
-  await expect(page.getByLabel('分析任务状态')).toContainText(new Date(analyzedLast.timestamp * 1000).toISOString().slice(0, 16).replace('T', ' '));
+  await expect(page.getByLabel('分析任务状态')).toContainText(new Date((analyzedLast.timestamp + 28800) * 1000).toISOString().slice(0, 16).replace('T', ' '));
   await expect(page.locator('.analysis-counts')).toContainText('39');
   await page.getByRole('tab', { name: /结构依据/ }).click();
   const evidenceCount = await page.locator('.structure-row').count();
@@ -136,7 +136,7 @@ test('1m analysis sends an unambiguous minute interval and survives rolling cand
   await expect(page.getByLabel('分析任务状态')).toHaveClass(/phase-success/);
   await expect(page.getByLabel('分析任务状态')).toContainText('行情已更新，当前结果需复核');
   await expect(page.getByLabel('分析任务状态')).toContainText('固定输入 299 根');
-  await expect(page.getByLabel('分析任务状态')).toContainText(new Date(expectedInput.at(-1)!.timestamp * 1000).toISOString().slice(0, 16).replace('T', ' '));
+  await expect(page.getByLabel('分析任务状态')).toContainText(new Date((expectedInput.at(-1)!.timestamp + 28800) * 1000).toISOString().slice(0, 16).replace('T', ' '));
   await page.getByRole('tab', { name: /结构依据/ }).click();
   await expect.poll(() => page.locator('.structure-row').count()).toBeGreaterThan(0);
   expect(requests).toHaveLength(1);

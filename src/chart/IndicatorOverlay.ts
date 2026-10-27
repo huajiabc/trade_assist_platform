@@ -5,13 +5,13 @@ import type { Viewport } from './coordinates';
 import { distanceToIndicatorGeometry, indicatorDisplayEndTime, mapIndicatorZone, type IndicatorGeometry } from './indicatorCoordinates';
 import { ChartLabelRegistry, type LabelBox } from './labelLayout';
 import { drawZoneLabel } from './zoneLabel';
+import { CHART_THEME, withAlpha } from './chartTheme';
 
 type Target = Parameters<IPrimitivePaneRenderer['draw']>[0];
 interface DrawItem { zone: RuleIndicatorZone; geometry: IndicatorGeometry }
 
-const colors = { FVG: { bullish: '#77a9ff', bearish: '#bc94ec' }, OB: { bullish: '#42c9b5', bearish: '#e9b768' } };
+const colors = CHART_THEME.zone;
 const retired = (zone: RuleIndicatorZone) => zone.status === 'filled' || zone.status === 'invalidated';
-const alpha = (hex: string, opacity: number) => `rgba(${parseInt(hex.slice(1, 3), 16)},${parseInt(hex.slice(3, 5), 16)},${parseInt(hex.slice(5, 7), 16)},${opacity})`;
 
 /** Deterministic FVG/OB evidence, separate from the model's interpretation. */
 export class IndicatorOverlay implements ISeriesPrimitive {
@@ -91,14 +91,14 @@ export class IndicatorOverlay implements ISeriesPrimitive {
 
   private drawZone(ctx: CanvasRenderingContext2D, { zone, geometry: g }: DrawItem, background: boolean): void {
     const selected = zone.id === this.selectedId;
-    const color = retired(zone) && !selected ? '#8792a5' : colors[zone.type][zone.direction];
-    const subdued = retired(zone) || Boolean(this.selectedId && !selected);
+    const color = retired(zone) && !selected ? CHART_THEME.retired : colors[zone.type][zone.direction];
+    const subdued = (retired(zone) && !selected) || Boolean(this.selectedId && !selected);
     ctx.save();
     try {
       ctx.globalAlpha = subdued ? .46 : 1;
       if (background) {
         // Formation is a causal boundary. Origin history is deliberately unfilled.
-        ctx.fillStyle = alpha(color, retired(zone) ? .05 : selected ? .24 : .14);
+        ctx.fillStyle = withAlpha(color, retired(zone) && !selected ? .05 : selected ? .24 : .14);
         const bounds = this.paintBounds(g);
         ctx.fillRect(bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top);
       }

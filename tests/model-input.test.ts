@@ -101,7 +101,7 @@ describe('complete-window model input', () => {
       screenshot: { mimeType: 'image/png', base64: 'unused-test-image' } };
     const serialized = JSON.parse(JSON.stringify(buildAnalysisPayload(request)));
     expect(Object.keys(serialized).sort()).toEqual([
-      'task', 'timestampUnit', 'intervalSeconds', 'candleCloseStatus', 'analysisScope', 'reviewWindows', 'ruleIndicators', 'strategyCatalog', 'structureReview', 'outputBudgets', 'tradeRiskContext', 'tradePlanningTask', 'context', 'candles',
+      'task', 'timestampUnit', 'intervalSeconds', 'candleCloseStatus', 'analysisScope', 'reviewWindows', 'ruleIndicators', 'strategyCatalog', 'structureReview', 'outputBudgets', 'tradeRiskContext', 'tradePlanningTask', 'context', 'marketContext', 'candles',
     ].sort());
     expect(serialized).not.toHaveProperty('structures');
     expect(serialized).not.toHaveProperty('priceAction');
@@ -110,6 +110,9 @@ describe('complete-window model input', () => {
     expect(serialized).not.toHaveProperty('screenshot');
     expect(serialized).not.toHaveProperty('validationFeedback');
     expect(serialized.candles).toEqual(request.candles);
+    expect(serialized.marketContext.source).toBe('deterministic-ohlcv-and-calendar');
+    expect(serialized.marketContext.rows).toHaveLength(request.candles.length);
+    expect(serialized.marketContext.rows.map((row: unknown[]) => row[0])).toEqual(request.candles.map(bar => bar.timestamp));
   });
 
   it.each([60, 300, 3_600, 86_400])('provides an unambiguous %i-second interval based on actual candles', seconds => {

@@ -1,3 +1,4 @@
+import { shortDisplayTime } from '../../shared/displayTime';
 import { auditPlanScale, type PlanPolicy } from '../../shared/planPolicy';
 import type { Candle } from '../../shared/market';
 import { strategyName } from '../../shared/strategyTypes';
@@ -12,7 +13,7 @@ import { TradePlanTracking } from './TradePlanTracking';
 import type { planEvidenceSummary } from '../../shared/analysisResearch';
 import { TradeStopAudit } from './TradeStopAudit';
 
-const date = (time: number) => new Date(time * 1000).toISOString().replace('T', ' ').slice(5, 16);
+const date = (time: number) => shortDisplayTime(time);
 const ratio = (value: number) => value < .01 ? value.toExponential(2) : Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value);
 const percent = (value: number) => value < .01 ? value.toExponential(2) : value.toFixed(2);
 
@@ -42,7 +43,7 @@ export function TradePlans({ planPolicy,referenceCandles,ruleStructures = [], on
       return <article className={`trade-plan-card ${selectedId === setup.id ? 'is-selected' : ''}`} key={setup.id} data-setup-id={setup.id}>
         <div className="trade-plan-heading"><div><span className="advanced-number">{String(index + 1).padStart(2, '0')}</span><h4>{setup.direction === 'bullish' ? '偏多' : '偏空'}开仓候选</h4></div><span className="confirmation candidate"><Clock size={12}/>{PLAN_PHASE_LABELS[tracking[setup.id]?.phase ?? (setup.tracking ? 'waiting' : 'manual')]}</span></div>
         <p className="strategy-badge">{strategyName(setup.strategyId)}{setup.strategyId&&' · AI归类（单周期，待跨周期核验）'}</p>
-        <button className="trade-focus-button" onClick={() => onSelect(setup)} aria-pressed={selectedId === setup.id} aria-label={`定位开仓候选 ${index + 1}`}><span>定位 {date(setup.anchorTime)} UTC</span><ArrowUpRight size={15}/></button>
+        <button className="trade-focus-button" onClick={() => onSelect(setup)} aria-pressed={selectedId === setup.id} aria-label={`定位开仓候选 ${index + 1}`}><span>定位 {date(setup.anchorTime)} UTC+8</span><ArrowUpRight size={15}/></button>
         <div className="trade-price-grid"><div><span>参考入场 E</span><strong>{formatPrice(setup.entry)}</strong></div><div><span>计划止损 SL</span><strong className="trade-loss">{formatPrice(setup.stopLoss)}</strong></div><div><span>止损距离</span><strong>{formatPrice(first.risk)}</strong><small>{percent(first.riskPct)}% · 价格距离</small></div></div>
         <TradeStopAudit audit={evidenceSummary[setup.id]?.stopRisk}/>{scale&&<details className="plan-scale-audit"><summary>{planPolicy?.profile==='structural'?'结构波段':'局部短线'}幅度筛选依据</summary><p>参考周期 {scale.context.referenceTimeframe} · 保护至少 {formatPrice(scale.context.minimumRiskDistance)} / 首目标至少 {formatPrice(scale.context.minimumTargetDistance)} / 至少 {scale.context.minimumRR}R。属于本次分析快照的研究偏好，不是胜率或成交保证。</p>{scale.errors.map(error=><p className="plan-evidence-warning" key={error}>{error} 原计划保留不改价，请重新分析。</p>)}</details>}
         <div className="risk-reward-targets">{setup.targets.map((target, targetIndex) => {
@@ -80,7 +81,7 @@ export function LiquiditySweeps({ sweeps, hasAnalysis, selectedId, onSelect }: S
     <p className="advanced-explainer sweep-explainer"><Info size={15}/><span>基于 OHLC 推断历史高低点附近的扫除形态。越界并收回是已确认形态，未收回仍为候选；无法据此确认实际挂单、止损成交或机构意图。</span></p>
     {sweeps.length ? <div className="sweep-list">{sweeps.map(sweep => <article className={`sweep-card ${selectedId === sweep.id ? 'is-selected' : ''}`} key={sweep.id} data-sweep-id={sweep.id}>
       <div className="sweep-card-heading"><div><span className={`sweep-side ${sweep.side}`}>{sweep.side === 'buy-side' ? 'BSL' : 'SSL'}</span><h3>{sweep.side === 'buy-side' ? '买方流动性 · 前高上方' : '卖方流动性 · 前低下方'}</h3></div><span className={`confirmation ${sweep.status}`}>{sweep.status === 'confirmed' ? '影线越界后收回' : '候选 · 待确认'}</span></div>
-      <button className="trade-focus-button" onClick={() => onSelect(sweep)} aria-pressed={selectedId === sweep.id} aria-label={`定位${sweep.side === 'buy-side' ? '买方' : '卖方'}流动性扫除 ${date(sweep.sweepTime)}`}><span>{date(sweep.levelTime)} → {date(sweep.sweepTime)} UTC</span><ArrowUpRight size={15}/></button>
+      <button className="trade-focus-button" onClick={() => onSelect(sweep)} aria-pressed={selectedId === sweep.id} aria-label={`定位${sweep.side === 'buy-side' ? '买方' : '卖方'}流动性扫除 ${date(sweep.sweepTime)}`}><span>{date(sweep.levelTime)} → {date(sweep.sweepTime)} UTC+8</span><ArrowUpRight size={15}/></button>
       <div className="sweep-price-grid"><div><span>参考价位</span><strong>{formatPrice(sweep.levelPrice)}</strong></div><div><span>越界极值</span><strong>{formatPrice(sweep.extremePrice)}</strong></div></div>
       <dl className="advanced-reasons"><div><dt>识别依据</dt><dd>{sweep.rationale}</dd></div><div><dt>失效条件</dt><dd>{sweep.invalidation}</dd></div></dl>
     </article>)}</div> : <div className="advanced-empty"><Info size={17}/><p>{hasAnalysis ? '本次未识别到符合条件的流动性扫除。若为旧版结果，请重新分析以启用此项。' : '完成分析后，可查看扫除的参考价位、越界 K 线及收回依据。'}</p></div>}

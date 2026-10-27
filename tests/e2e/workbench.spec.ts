@@ -21,7 +21,7 @@ test('loads three roles without AI calls, shows waiting candidates, locates real
  await region.getByRole('button',{name:'开启多周期研究',exact:true}).click();await expect(region.locator('.research-frame')).toHaveCount(3);await expect(region.locator('.research-candidate')).toHaveCount(12);expect(counts().researchCalls).toBe(0);
  await expect(region).toContainText('Market State v1');for(const button of await region.getByRole('button',{name:'保存研究候选',exact:true}).all())await expect(button).toBeDisabled();
  await region.locator('.research-context>summary').click();await region.getByRole('button',{name:'查看研究 5m 图表',exact:true}).click();await expect(page.getByLabel('研究定位图表').locator('canvas').first()).toBeVisible();
- await page.getByRole('button',{name:'生成多周期交易计划'}).click();await expect(region).toContainText('本地占位审阅完成');expect(counts().researchCalls).toBe(1);await expect(region).toContainText('Market State v2');
+ await page.getByRole('button',{name:'深度分析'}).click();await expect(region).toContainText('本地占位审阅完成');expect(counts().researchCalls).toBe(1);await expect(region).toContainText('Market State v2');
  await expect.poll(async()=>await page.evaluate(async()=>await new Promise<number>(resolve=>{const r=indexedDB.open('pa-smc-research',1);r.onsuccess=()=>{const db=r.result,q=db.transaction('workspaces').objectStore('workspaces').get('research-1.0:live:SNDKUSDT');q.onsuccess=()=>{resolve(q.result?.version??0);db.close();};};}))).toBe(2);
  const download=page.waitForEvent('download');await region.getByRole('button',{name:'导出研究状态',exact:true}).click();const artifact=await download,path=await artifact.path();expect(path).not.toBeNull();const exported=JSON.parse(await readFile(path!,'utf8'));expect(exported.exportVersion).toBe('research-evaluation-1.0');expect(Object.keys(exported.state.snapshots)).toHaveLength(3);expect(exported.state.evaluations[0].candidates).toHaveLength(12);
  await page.screenshot({path:'artifacts/workbench-browser.png'});
@@ -29,7 +29,7 @@ test('loads three roles without AI calls, shows waiting candidates, locates real
 });
 test('missing context is degraded and invalid AI references leave the previous state untouched',async({page})=>{
  const {region,counts}=await install(page,true,true);await region.getByRole('button',{name:'开启多周期研究',exact:true}).click();await expect(region.locator('.research-frame').nth(1)).toContainText('数据不足 / 降级');await region.locator('.research-context>summary').click();await expect(region).toContainText('尚无AI解释');
- await page.getByRole('button',{name:'生成多周期交易计划'}).click();await expect(region.getByRole('alert')).toContainText('未知');await expect(region).toContainText('Market State v1');await expect(region).toContainText('尚无AI解释');expect(counts().paid).toBe(0);
+ await page.getByRole('button',{name:'深度分析'}).click();await expect(region.getByRole('alert')).toContainText('未知');await expect(region).toContainText('Market State v1');await expect(region).toContainText('尚无AI解释');expect(counts().paid).toBe(0);
 });
 test('CSV mode aggregates actual minute data and performs no live research fetch',async({page})=>{
  const {region,counts}=await install(page);const rows=frame('1m',300).candles,csv=['timestamp,open,high,low,close,volume',...rows.map(b=>[b.timestamp,b.open,b.high,b.low,b.close,b.volume].join(','))].join('\n');

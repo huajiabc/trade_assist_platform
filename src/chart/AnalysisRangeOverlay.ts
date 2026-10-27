@@ -4,7 +4,8 @@ import { selectAnalysisCandles, type AnalysisRange } from '../analysisRange';
 
 type Target = Parameters<IPrimitivePaneRenderer['draw']>[0];
 const BLUE = '#6ba9ff';
-const shortDate = (timestamp: number) => new Date(timestamp * 1000).toISOString().slice(5, 16).replace('T', ' ');
+import { shortDisplayTime } from '../../shared/displayTime';
+const shortDate = shortDisplayTime;
 
 /** Selection lives in the chart renderer, so pan, zoom and resize stay aligned. */
 export class AnalysisRangeOverlay implements ISeriesPrimitive {
@@ -54,7 +55,7 @@ export class AnalysisRangeOverlay implements ISeriesPrimitive {
         ctx.strokeStyle = '#3a5f94'; ctx.strokeRect(left + .5, top + .5, width - 1, 20);
         ctx.fillStyle = '#b7d5ff'; ctx.textAlign = 'center'; ctx.fillText(text, left + width / 2, top + 14);
         if (Math.min(mediaSize.width, x2) - Math.max(0, x1) > 225) {
-          const date = `${shortDate(range.from)} → ${shortDate(range.to)} UTC`;
+          const date = `${shortDate(range.from)} → ${shortDate(range.to)} UTC+8`;
           const dateWidth = ctx.measureText(date).width + 12;
           ctx.fillStyle = 'rgba(19,23,34,.92)'; ctx.fillRect(left + width / 2 - dateWidth / 2, top - 19, dateWidth, 16);
           ctx.fillStyle = '#93add0'; ctx.fillText(date, left + width / 2, top - 7);

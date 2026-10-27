@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, showChartSettings } from './fixtures';
 import type { Page } from '@playwright/test';
 import { createMockAnalysis } from '../../shared/mock';
 import { validateAnalysis, type Analysis } from '../../shared/analysis';
@@ -8,7 +8,7 @@ import { SAMPLE_CANDLES } from '../../shared/sample';
 
 const candles: Candle[] = SAMPLE_CANDLES.map((candle, index) => ({ ...candle, timestamp: 1791244800 + index * 60 }));
 const statusName = '开仓计划可视化状态';
-const utc = (time: number) => new Date(time * 1000).toISOString().replace('T', ' ').slice(0, 16);
+const utc = (time: number) => new Date((time + 28800) * 1000).toISOString().replace('T', ' ').slice(0, 16);
 
 async function install(page: Page, createResult: (input: Candle[]) => Analysis) {
   let requests = 0;
@@ -43,8 +43,8 @@ async function install(page: Page, createResult: (input: Candle[]) => Analysis) 
 
 async function riskAreaPixels(page: Page): Promise<{ risk: number; reward: number }> {
   return page.locator('.chart-host canvas').evaluateAll(nodes => {
-    // Native fills either retain their transparent RGBA or blend over #131722.
-    const colors = { risk: [[52, 28, 39, 255], [242, 54, 69, 38]], reward: [[17, 44, 49, 255], [8, 153, 129, 41]] };
+    // Native fills either retain their transparent RGBA or blend over #10141c.
+    const colors = { risk: [[50, 25, 34, 255], [242, 54, 69, 38]], reward: [[15, 41, 44, 255], [8, 153, 129, 41]] };
     const counts = { risk: 0, reward: 0 };
     for (const node of nodes) {
       const canvas = node as HTMLCanvasElement;
@@ -75,7 +75,7 @@ test('a watch-only model decision explains the absent numeric overlay without in
   await expect(status).toContainText('文字条件不等于含 E / SL / TP 的数值计划');
   await expect(status.getByRole('button', { name: '定位当前计划', exact: true })).toHaveCount(0);
   await status.getByRole('button', { name: '查看计划与观察依据', exact: true }).click();
-  await expect(page.getByRole('tab', { name: /单周期观察/ })).toContainText('开仓计划0文字观察 1');
+  await expect(page.getByRole('tab', { name: /单周期观察/ })).toContainText('单周期观察0文字观察 1');
   await expect(page.locator('.trade-plans .advanced-empty')).toContainText(reason);
   await expect(page.locator('.trade-plan-card')).toHaveCount(0);
   expect(fixture.requests()).toBe(1);
@@ -115,11 +115,15 @@ test('two numeric plans switch one native risk box and restore a disabled layer'
   const status = page.getByLabel(statusName, { exact: true });
   await expect(status).toContainText('图中计划 1 / 2 · 需人工确认');
   await expect(status).toContainText('等待回踩关键位后收盘站回');
+  await showChartSettings(page);
+  const sessions = page.getByRole('button', { name: '时段底色', exact: true });
+  if (await sessions.getAttribute('aria-pressed') === 'true') await sessions.click();
   for (const name of [/支撑.*阻力/, /推进.*回撤/, /K 线形态/, /突破.*回踩/, /关键价位/]) {
     const toggle = page.getByRole('checkbox', { name });
     if (await toggle.count()) await toggle.uncheck();
   }
   await page.getByRole('checkbox', { name: '主结构', exact: true }).uncheck();
+  await page.locator('details.chart-indicator-details > summary').click();
   const rules = page.getByLabel('规则 FVG 与 OB 指标', { exact: true });
   await rules.locator('.type-fvg input').uncheck();
   await rules.locator('.type-ob input').uncheck();
@@ -162,11 +166,11 @@ test('a manual historical plan remains explicitly anchored to its original snaps
   await page.setViewportSize({ width: 390, height: 844 });
   const fixture = await install(page, input => createMockAnalysis(input));
   await page.getByRole('button', { name: '手动范围', exact: true }).click();
-  await page.getByLabel('范围开始 UTC', { exact: true }).selectOption(String(candles[20].timestamp));
-  await page.getByLabel('范围结束 UTC', { exact: true }).selectOption(String(candles[120].timestamp));
+  await page.getByLabel('范围开始 UTC+8', { exact: true }).selectOption(String(candles[20].timestamp));
+  await page.getByLabel('范围结束 UTC+8', { exact: true }).selectOption(String(candles[120].timestamp));
   await fixture.analyze.click();
   const status = page.getByLabel(statusName, { exact: true });
-  await expect(status).toContainText(`手动范围快照 · 末根 ${utc(candles[120].timestamp)} UTC`);
+  await expect(status).toContainText(`手动范围快照 · 末根 ${utc(candles[120].timestamp)} UTC+8`);
   await expect(status).toContainText('计划锚定原快照，行情条件核验不代表成交');
   await status.scrollIntoViewIfNeeded();
   expect(await status.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);

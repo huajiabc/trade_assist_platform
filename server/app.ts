@@ -2,6 +2,8 @@ import { planPolicySchema } from '../shared/planPolicy';
 import { visualRequestFields, validateImageAnchors } from '../shared/analysisInput';
 import { chartImageBytes } from './chartImages';
 import { createResearchRouter } from './workbench';
+import { createAccountRouter } from './accountRouter';
+import { accountServiceFromEnvironment, type ReadonlyAccountService } from './binanceReadonly';
 import express, { type ErrorRequestHandler } from 'express';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
@@ -40,6 +42,7 @@ const requestSchema = z.object({
 }).strict();
 
 export interface AppOptions {
+  accountService?:ReadonlyAccountService;
   config?: ServerConfig;
   provider?: AnalysisProvider;
   codexProvider?: CodexProvider;
@@ -116,6 +119,7 @@ export function createApp(options: AppOptions = {}) {
     next();
   });
   app.use('/api', express.json({ limit: '2mb', strict: true }));
+  app.use('/api/account',createAccountRouter({account:options.accountService??accountServiceFromEnvironment(),config,provider,codex,isCodexBusy:()=>codexBusy,setCodexBusy:value=>{codexBusy=value;}}));
 
   app.use('/api/research', createResearchRouter({ market: marketProvider, config, provider, codex, isCodexBusy: () => codexBusy, setCodexBusy: value => { codexBusy = value; } }));
 

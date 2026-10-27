@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, showChartSettings } from './fixtures';
 import { validateAnalysis, type Analysis } from '../../shared/analysis';
 import { createMockAnalysis } from '../../shared/mock';
 import type { Candle } from '../../shared/market';
@@ -39,6 +39,7 @@ test('raw historical annotation distribution explains an empty earlier span and 
   await expect(page.locator('.instrument-name')).toContainText('annotation-history');
   const analyze = page.getByRole('button', { name: '分析当前 K 线范围', exact: true });
   await analyze.click();
+  await page.getByText('分析覆盖与诊断', { exact: true }).click(); await showChartSettings(page);
   const distribution = page.getByLabel('历史标注分布', { exact: true });
   await expect(distribution).toBeVisible();
   await expect(distribution.locator('.annotation-distribution-count').nth(0)).toHaveText('前段0项');
@@ -47,9 +48,9 @@ test('raw historical annotation distribution explains an empty earlier span and 
   await expect(distribution).toContainText('前段、中段未返回锚定于该段的标注，不表示没有结构');
   await expect(distribution).toContainText('跨段结构只计一次，不代表逐根分析覆盖率');
   const titles = [
-    '2026-10-10 00:00:00 UTC → 2026-10-12 11:00:00 UTC · 60 根 K 线',
-    '2026-10-12 12:00:00 UTC → 2026-10-14 23:00:00 UTC · 60 根 K 线',
-    '2026-10-15 00:00:00 UTC → 2026-10-17 11:00:00 UTC · 60 根 K 线',
+    '2026-10-10 08:00:00 UTC+8 → 2026-10-12 19:00:00 UTC+8 · 60 根 K 线',
+    '2026-10-12 20:00:00 UTC+8 → 2026-10-15 07:00:00 UTC+8 · 60 根 K 线',
+    '2026-10-15 08:00:00 UTC+8 → 2026-10-17 19:00:00 UTC+8 · 60 根 K 线',
   ];
   for (let index = 0; index < titles.length; index++) {
     await expect(distribution.locator('.annotation-distribution-count').nth(index)).toHaveAttribute('title', titles[index]);

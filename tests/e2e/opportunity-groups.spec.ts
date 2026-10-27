@@ -25,5 +25,16 @@ test('one concise opportunity retains independent strategy selection, chart loca
  const group=region.locator('.research-opportunity');await expect(group).toHaveCount(1);await expect(group).toContainText('B · BOS突破与回踩延续');await expect(group).toContainText('F · 强位移与延续交易');await expect(region.locator('.research-candidate')).toHaveCount(2);await expect(region.locator('.research-candidate').first()).toBeHidden();
  await group.getByRole('combobox').selectOption('candidate-f');await expect(group.locator('.research-opportunity-trigger')).toContainText('candidate-f 独立触发说明');await group.getByRole('button',{name:'定位当前候选',exact:true}).click();await expect(page.getByLabel('研究定位图表')).toContainText('F · 强位移与延续交易');await expect(page.getByLabel('研究定位图表').locator('canvas').first()).toBeVisible();
  await group.getByRole('button',{name:'保存该策略候选',exact:true}).click();await expect(region.locator('.research-plan')).toHaveCount(1);await region.locator('.research-management>summary').click();await expect(region.locator('.research-plan')).toContainText('F · 强位移与延续交易');await expect(region.locator('.research-plan')).toContainText('candidate-f 独立触发说明');
- await expect.poll(async()=>page.evaluate(async()=>new Promise<string|null>(resolve=>{const request=indexedDB.open('pa-smc-research',1);request.onsuccess=()=>{const db=request.result,r=db.transaction('workspaces').objectStore('workspaces').get('research-1.0:live:SNDKUSDT');r.onsuccess=()=>{resolve(r.result?.plans[0]?.strategyId??null);db.close();};};}))).toBe('displacement-continuation');expect(paidCalls).toBe(0);expect(errors).toEqual([]);
+ await expect.poll(async()=>page.evaluate(async()=>new Promise<string|null>(resolve=>{const request=indexedDB.open('pa-smc-research',1);request.onsuccess=()=>{const db=request.result,r=db.transaction('workspaces').objectStore('workspaces').get('research-1.0:live:SNDKUSDT');r.onsuccess=()=>{resolve(r.result?.plans[0]?.strategyId??null);db.close();};};}))).toBe('displacement-continuation');// Collapsing saved details must not hide a plan that needs attention.
+ await page.evaluate(async()=>new Promise<void>((resolve,reject)=>{
+  const req=indexedDB.open('pa-smc-research',1);
+  req.onsuccess=()=>{const db=req.result,tx=db.transaction('workspaces','readwrite'),store=tx.objectStore('workspaces'),get=store.get('research-1.0:live:SNDKUSDT');
+   get.onsuccess=()=>{const state=get.result;state.plans[0].needsReview=true;state.plans[0].reviewReasons=['受控保护结构复核提示'];store.put(state,'research-1.0:live:SNDKUSDT');};
+   tx.oncomplete=()=>{db.close();resolve();};tx.onerror=()=>reject(tx.error);
+  };req.onerror=()=>reject(req.error);
+ }));
+ await page.reload();
+ await expect(region.locator('.research-management>summary')).toContainText('1 需复核');
+ await expect(region.locator('.research-plan')).toBeHidden();
+ expect(paidCalls).toBe(0);expect(errors).toEqual([]);
 });

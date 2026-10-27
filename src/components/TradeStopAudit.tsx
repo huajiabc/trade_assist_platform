@@ -1,6 +1,7 @@
 import { formatPrice } from '../../shared/format';
+import { shortDisplayTime } from '../../shared/displayTime';
 import type { StopRiskAudit } from '../../shared/tradeRisk';
-const date = (time: number) => new Date(time * 1000).toISOString().replace('T', ' ').slice(5, 16);
+const date = shortDisplayTime;
 const ratio = (value: number) => value < .01 ? value.toExponential(2) : Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value);
 
 /** Snapshot metrics only: this component never moves the reference entry or stop. */
@@ -16,6 +17,6 @@ export function TradeStopAudit({ audit }: { audit?: StopRiskAudit }) {
       <div><dt>保护结构外沿</dt><dd>{structuralBoundary === null ? '未提供' : formatPrice(structuralBoundary)}</dd></div>
       <div><dt>结构外止损缓冲</dt><dd>{structuralBuffer === null ? '无法核验' : formatPrice(structuralBuffer)}{bufferAtr !== null && <small>{ratio(bufferAtr)} ATR</small>}</dd></div></dl>
     <p>项目过滤门槛：风险 ≥ {context.policy.minimumRiskAtr} ATR，结构外缓冲 ≥ {context.policy.minimumStructureBufferAtr} ATR。仅本周期参照，参数未经回测。</p>
-    <p>{context.asOfTime === null ? '无可用快照' : date(context.asOfTime) + ' UTC'} · 不随实时价格自动移动止损。</p>
+    <p>{context.asOfTime === null ? '无可用快照' : date(context.asOfTime) + ' UTC+8'} · 不随实时价格自动移动止损。</p>
   </div>;
 }

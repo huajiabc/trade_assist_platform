@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, showChartSettings, showSinglePeriod } from './fixtures';
 
 test('sample, overlays, selection, filters and server mock analysis', async ({ page }) => {
   const errors: string[] = [];
@@ -13,6 +13,8 @@ test('sample, overlays, selection, filters and server mock analysis', async ({ p
   await first.click();
   await expect(first).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.evidence-intro')).toContainText('已定位');
+  await showChartSettings(page);
+  await page.getByRole('button', { name: 'SMC 主视图', exact: true }).click();
   const filter = page.getByRole('button', { name: 'HH', exact: true });
   await filter.click();
   await expect(filter).toHaveAttribute('aria-pressed', 'false');
@@ -42,6 +44,7 @@ test('CSV import validates errors, accepts sample and reanalyzes', async ({ page
   await expect(page.locator('.instrument-name')).toContainText('BTC / USDT');
   await page.getByLabel('上传 OHLCV CSV').setInputFiles('public/sample-ohlcv.csv');
   await expect(page.locator('.instrument-name')).toContainText('sample-ohlcv');
+  await showSinglePeriod(page);
   await expect(page.locator('.empty-state')).toBeVisible();
   await page.getByRole('button', { name: '分析当前 K 线范围', exact: true }).first().click();
   await expect(page.getByRole('status').filter({ hasText: '分析完成' })).toBeVisible();

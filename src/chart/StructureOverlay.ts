@@ -15,6 +15,8 @@ import { distanceToGeometry, mapStructure, type StructureGeometry, type Viewport
 import { indicatorDisplayEndTime } from './indicatorCoordinates';
 import { ChartLabelRegistry, labelDensity, placeLabel, type LabelBox } from './labelLayout';
 import { drawZoneLabel } from './zoneLabel';
+import { CHART_THEME, withAlpha } from './chartTheme';
+import { horizontalStroke, labelSurface } from './drawingStyle';
 
 type Target = Parameters<IPrimitivePaneRenderer['draw']>[0];
 export type ChartStructure = Structure & Partial<Pick<RuleStructure, 'source' | 'importance' | 'timing'>>;
@@ -113,31 +115,35 @@ export class StructureOverlay implements ISeriesPrimitive {
       ctx.beginPath();
       ctx.rect(0, 0, mediaSize.width, mediaSize.height);
       ctx.clip();
+      // Lay out text before lines so a break-level line can leave a small gap
+      // underneath its centered label without moving the actual price level.
+      this.labels = [];
+      const occupied = background ? [] : this.registry.begin('structures', 0);
+      const inherited = occupied.length;
+      const density = this.density();
+      const obstacles = !background && this.lastItems.some(item => item.geometry.kind !== 'zone') ? this.candleObstacles() : [];
+      const labelItems = [...this.lastItems].sort((a, b) => Number(b.structure.id === this.selectedId) - Number(a.structure.id === this.selectedId)
+        || Number(b.structure.importance === 'major') - Number(a.structure.importance === 'major')
+        || Number(['BOS', 'CHoCH'].includes(b.structure.type)) - Number(['BOS', 'CHoCH'].includes(a.structure.type))
+        || b.geometry.x2 - a.geometry.x2);
+      const paintLabels: (() => void)[] = [];
+      let count = 0;
+      if (!background) for (const { structure, geometry } of labelItems) {
+        if (structure.id !== this.selectedId && (count >= density.main || (!density.showLocal && structure.importance === 'local'))) continue;
+        const before = occupied.length;
+        const paint = this.layoutLabel(ctx, structure, geometry, occupied, obstacles);
+        if (paint) paintLabels.push(paint);
+        if (occupied.length > before) count++;
+      }
       for (const { structure, geometry } of this.lastItems) {
         ctx.save();
         if ((this.selectedId || this.dimmed) && structure.id !== this.selectedId) ctx.globalAlpha = .35;
+        else if (structure.importance === 'local') ctx.globalAlpha = .66;
         this.drawItem(ctx, structure, geometry, background);
         ctx.restore();
       }
       if (background) { ctx.restore(); return; }
-      this.labels = [];
-      const occupied = this.registry.begin('structures', 0);
-      const inherited = occupied.length;
-      const density = this.density();
-      const obstacles = this.lastItems.some(item => item.geometry.kind !== 'zone') ? this.candleObstacles() : [];
-      let count = 0;
-      const labels = [...this.lastItems].sort((a, b) => Number(b.structure.id === this.selectedId) - Number(a.structure.id === this.selectedId)
-        || Number(b.structure.importance === 'major') - Number(a.structure.importance === 'major')
-        || Number(['BOS', 'CHoCH'].includes(b.structure.type)) - Number(['BOS', 'CHoCH'].includes(a.structure.type))
-        || b.geometry.x2 - a.geometry.x2);
-      for (const { structure, geometry } of labels) {
-        ctx.save();
-        if ((this.selectedId || this.dimmed) && structure.id !== this.selectedId) ctx.globalAlpha = .4;
-        if (structure.id === this.selectedId || (count < density.main && (density.showLocal || structure.importance !== 'local'))) {
-          const before = occupied.length; this.drawLabel(ctx, structure, geometry, occupied, obstacles); if (occupied.length > before) count++;
-        }
-        ctx.restore();
-      }
+      for (const paint of paintLabels) paint();
       this.registry.commit('structures', occupied, inherited);
       ctx.restore();
     });
@@ -164,99 +170,93 @@ export class StructureOverlay implements ISeriesPrimitive {
     const { x1, x2, y1, y2 } = geometry;
     ctx.save();
     ctx.lineWidth = selected ? 1.5 : 1;
-    ctx.strokeStyle = selected ? '#d1d4dc' : color;
+    ctx.strokeStyle = selected ? CHART_THEME.foreground : color;
     ctx.fillStyle = color;
     ctx.setLineDash(candidate ? [4, 4] : []);
     if (background) {
-      if (geometry.kind === 'line') {
-        // Screen-space emphasis around the exact broken level; not a new price zone.
-        ctx.fillStyle = this.alpha(color, selected ? .13 : .06);
-        ctx.fillRect(x1, y1 - 3, x2 - x1, 6);
+      if (geometry.kind === 'line' && selected) {
+        ctx.fillStyle = withAlpha(color, .06);
+        ctx.fillRect(x1, y1 - 2, x2 - x1, 4);
       } else if (geometry.kind === 'zone') {
-        ctx.fillStyle = this.alpha(color, selected ? .17 : .085);
+        ctx.fillStyle = withAlpha(color, selected ? .24 : .14);
         ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
       }
       ctx.restore(); return;
     }
     if (geometry.kind === 'point') {
       // The dot is at the exact price; only its text label is offset for legibility.
-      const high = structure.type === 'HH' || structure.type === 'LH';
       ctx.beginPath();
-      ctx.arc(x1, y1, selected ? 3.5 : 2, 0, Math.PI * 2);
+      ctx.arc(x1, y1, selected ? 3 : 1.6, 0, Math.PI * 2);
       if (candidate) ctx.stroke(); else ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(x1, y1 + (high ? -5 : 5));
-      ctx.lineTo(x1, y1 + (high ? -11 : 11));
-      ctx.stroke();
     } else if (geometry.kind === 'line') {
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y1);
-      ctx.stroke();
+      horizontalStroke(ctx, x1, x2, y1, this.labels.find(label => label.id === structure.id)?.box);
       ctx.setLineDash([]);
-      ctx.fillStyle = '#131722';
-      ctx.beginPath(); ctx.arc(x1, y1, selected ? 3 : 2, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = CHART_THEME.background;
+      if (selected) { ctx.beginPath(); ctx.arc(x1, y1, 2.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
       const event = this.candles.find((candle) => candle.timestamp === structure.endTime);
       const closeY = event && this.attachment?.series.priceToCoordinate(event.close * this.priceMultiplier);
       const highY = event && this.attachment?.series.priceToCoordinate(event.high * this.priceMultiplier);
       const lowY = event && this.attachment?.series.priceToCoordinate(event.low * this.priceMultiplier);
-      if ((selected || this.density().mode === 'detail') && typeof closeY === 'number' && typeof highY === 'number' && typeof lowY === 'number') {
-        ctx.strokeStyle = this.alpha(color, .6); ctx.lineWidth = selected ? 1.4 : .8;
+      if (selected && typeof closeY === 'number' && typeof highY === 'number' && typeof lowY === 'number') {
+        ctx.strokeStyle = withAlpha(color, .6); ctx.lineWidth = 1.2;
         ctx.strokeRect(x2 - 4, Math.min(highY, lowY) - 3, 8, Math.max(7, Math.abs(lowY - highY) + 6));
         ctx.beginPath(); ctx.moveTo(x2, y1); ctx.lineTo(x2, closeY); ctx.stroke();
-        ctx.strokeStyle = color; ctx.fillStyle = selected ? color : '#131722';
-        ctx.beginPath(); ctx.arc(x2, closeY, selected ? 4 : 3, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-      } else {
-        ctx.beginPath(); ctx.arc(x2, y1, 3, 0, Math.PI * 2); ctx.stroke();
+        ctx.strokeStyle = color; ctx.fillStyle = color;
+        ctx.beginPath(); ctx.arc(x2, closeY, 3, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      } else if (selected) {
+        ctx.beginPath(); ctx.arc(x2, y1, 2.5, 0, Math.PI * 2); ctx.stroke();
       }
     }
     ctx.restore();
   }
 
   private color(structure: Structure): string {
-    if (structure.type === 'OB') return '#9575cd';
-    return structure.direction === 'bullish' ? '#089981' : structure.direction === 'bearish' ? '#f23645' : '#b2b5be';
+    if (structure.type === 'FVG' || structure.type === 'OB') return CHART_THEME.zone[structure.type][structure.direction === 'bearish' ? 'bearish' : 'bullish'];
+    return structure.direction === 'bullish' ? CHART_THEME.bullish : structure.direction === 'bearish' ? CHART_THEME.bearish : CHART_THEME.neutral;
   }
 
-  private alpha(hex: string, opacity: number): string { return `rgba(${parseInt(hex.slice(1, 3), 16)},${parseInt(hex.slice(3, 5), 16)},${parseInt(hex.slice(5, 7), 16)},${opacity})`; }
-
-  private drawLabel(ctx: CanvasRenderingContext2D, structure: Structure, geometry: StructureGeometry, occupied: LabelBox[], obstacles: LabelBox[]): void {
+  private layoutLabel(ctx: CanvasRenderingContext2D, structure: ChartStructure, geometry: StructureGeometry, occupied: LabelBox[], obstacles: LabelBox[]): (() => void) | null {
     const selected = structure.id === this.selectedId;
     if (geometry.kind === 'zone') {
-      ctx.save();
-      ctx.fillStyle = selected ? '#d1d4dc' : this.color(structure);
-      const box = drawZoneLabel(ctx, structure.type, {
-        left: geometry.x1, top: geometry.y1, right: geometry.x2, bottom: geometry.y2,
-      }, this.viewport, occupied);
-      if (box) this.labels.push({id: structure.id, box});
-      ctx.restore();
-      return;
+      const bounds = { left: geometry.x1, top: geometry.y1, right: geometry.x2, bottom: geometry.y2 };
+      const box = drawZoneLabel(ctx, structure.type, bounds, this.viewport, occupied, false);
+      if (!box) return null;
+      this.labels.push({ id: structure.id, box });
+      return () => {
+        ctx.save(); ctx.fillStyle = selected ? CHART_THEME.foreground : this.color(structure);
+        if ((this.selectedId || this.dimmed) && !selected) ctx.globalAlpha = .4;
+        drawZoneLabel(ctx, structure.type, bounds, this.viewport);
+        ctx.restore();
+      };
     }
-    const name = structure.type;
-    const text = name + (structure.status === 'candidate' ? ' ◇候选' : '');
+    const text = structure.type + (structure.status === 'candidate' ? ' ◇' : '');
     const high = structure.type === 'HH' || structure.type === 'LH';
     const { x1, x2, y1 } = geometry;
     const x = geometry.kind === 'point' ? x1 : (x1 + x2) / 2;
-    const y = geometry.kind === 'point' ? y1 + (high ? -20 : 22) : y1 - 11;
+    const y = geometry.kind === 'point' ? y1 + (high ? -16 : 16) : y1;
     ctx.save();
-    ctx.font = `${selected ? 600 : 500} 10px Arial, "Segoe UI", sans-serif`;
+    ctx.font = `${selected ? 600 : 500} 11px Arial, "Segoe UI", sans-serif`;
     const width = ctx.measureText(text).width;
     const left = Math.max(4, Math.min(x - width / 2, this.viewport.width - width - 4));
     const labelY = Math.max(9, Math.min(y, this.viewport.height - 9));
-    const box = placeLabel({ left: left - 4, top: labelY - 7, width: width + 8, height: 14 }, this.viewport, occupied, selected, obstacles);
-    if (!box) { ctx.restore(); return; }
-    this.labels.push({id: structure.id, box});
-    if (Math.abs(box.top + 7 - labelY) > 8) {
-      ctx.strokeStyle = this.alpha(this.color(structure), .4); ctx.setLineDash([]);
-      ctx.beginPath(); ctx.moveTo(x, y1); ctx.lineTo(Math.max(box.left, Math.min(x, box.left + box.width)), box.top + 7); ctx.stroke();
-    }
-    // Price/time anchors remain untouched. Only overlapping text is suppressed.
-    ctx.fillStyle = selected ? '#363a45' : 'rgba(19,23,34,.94)';
-    ctx.fillRect(box.left, box.top, box.width, box.height);
-    ctx.fillStyle = selected ? '#f0f3fa' : this.color(structure);
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'left';
-    ctx.fillText(text, box.left + 4, box.top + 7);
+    const box = placeLabel({ left: left - 4, top: labelY - 8, width: width + 8, height: 16 }, this.viewport, occupied, selected, obstacles);
     ctx.restore();
+    if (!box) return null;
+    this.labels.push({id: structure.id, box});
+    return () => {
+      ctx.save();
+      if ((this.selectedId || this.dimmed) && !selected) ctx.globalAlpha = .4;
+      else if (structure.importance === 'local') ctx.globalAlpha = .7;
+      ctx.font = `${selected ? 600 : 500} 11px Arial, "Segoe UI", sans-serif`;
+      if (Math.abs(box.top + 8 - y) > 12) {
+        ctx.strokeStyle = withAlpha(this.color(structure), .3); ctx.lineWidth = .75; ctx.setLineDash([]);
+        ctx.beginPath(); ctx.moveTo(x, y1); ctx.lineTo(Math.max(box.left, Math.min(x, box.left + box.width)), box.top + 8); ctx.stroke();
+      }
+      if (selected) labelSurface(ctx, box, true);
+      ctx.fillStyle = selected ? CHART_THEME.foreground : this.color(structure);
+      ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+      ctx.fillText(text, box.left + 4, box.top + 8);
+      ctx.restore();
+    };
   }
 }

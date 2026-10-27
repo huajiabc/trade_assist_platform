@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, showChartSettings } from './fixtures';
 import type { Page } from '@playwright/test';
 import { detectRuleIndicators } from '../../shared/indicators';
 import type { Candle } from '../../shared/market';
@@ -49,6 +49,11 @@ async function installMarket(page: Page, snapshot: () => MarketSnapshot) {
     return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: { message: '规则指标测试禁止模型调用' } }) });
   });
   await page.goto('/?live=SNDKUSDT&interval=5m');
+  // Isolate the FVG/OB color assertions from the independently tested session tint.
+  const sessions = page.getByRole('button', { name: '时段底色', exact: true });
+  if (await sessions.getAttribute('aria-pressed') === 'true') await sessions.click();
+  await showChartSettings(page);
+  await page.locator('details.chart-indicator-details > summary').click();
   await expect(page.locator('.price-stat strong')).not.toHaveText('—');
   await page.getByRole('checkbox', { name: '实时更新', exact: true }).uncheck();
   return () => analysisRequests;
@@ -56,10 +61,10 @@ async function installMarket(page: Page, snapshot: () => MarketSnapshot) {
 
 async function coloredCanvasPixels(page: Page, type: 'FVG' | 'OB'): Promise<number> {
   return page.locator('.chart-host canvas').evaluateAll((canvases, indicatorType) => {
-    const colors = indicatorType === 'FVG' ? [[119, 169, 255], [188, 148, 236]] : [[66, 201, 181], [233, 183, 104]];
+    const colors = indicatorType === 'FVG' ? [[135, 151, 210], [173, 145, 201]] : [[101, 180, 166], [206, 151, 133]];
     // Borderless zones are translucent fills, while the small center text can
     // be suppressed when a candle cell is too narrow. Inspect both paint forms.
-    const fillColors = colors.flatMap(color => [.14, .24].map(opacity => color.map((channel, index) => Math.round(channel * opacity + [19, 23, 34][index] * (1 - opacity)))));
+    const fillColors = colors.flatMap(color => [.14, .24].map(opacity => color.map((channel, index) => Math.round(channel * opacity + [16, 20, 28][index] * (1 - opacity)))));
     let count = 0;
     for (const node of canvases) {
       const canvas = node as HTMLCanvasElement;
@@ -74,13 +79,16 @@ async function coloredCanvasPixels(page: Page, type: 'FVG' | 'OB'): Promise<numb
   }, type);
 }
 
-const utc = (timestamp: number) => new Date(timestamp * 1000).toISOString().replace('T', ' ').slice(0, 16);
+const utc = (timestamp: number) => new Date((timestamp + 28800) * 1000).toISOString().replace('T', ' ').slice(0, 16);
 
 test('closed OHLC immediately draws independent FVG and OB layers before AI, with mode and history toggles', async ({ page }) => {
   const snapshot = market(indicatorHistory());
   const requestCount = await installMarket(page, () => snapshot);
   const expected = detectRuleIndicators(snapshot.candles.slice(0, -1));
   const panel = page.getByLabel('规则 FVG 与 OB 指标', { exact: true });
+  const legend = page.getByLabel('结构绘图图例', { exact: true });
+  await expect(legend.getByText('FVG', { exact: true })).toBeVisible();
+  await expect(legend.getByText('OB', { exact: true })).toBeVisible();
   for (const type of ['FVG', 'OB'] as const) {
     const current = expected.zones.filter(zone => zone.type === type && zone.status !== 'filled' && zone.status !== 'invalidated');
     expect(current.length).toBeGreaterThan(0);
@@ -96,10 +104,12 @@ test('closed OHLC immediately draws independent FVG and OB layers before AI, wit
 
   await panel.locator('.type-fvg input').uncheck();
   await expect.poll(() => coloredCanvasPixels(page, 'FVG')).toBe(0);
+  await expect(legend.getByText('FVG', { exact: true })).toHaveCount(0);
   await expect.poll(() => coloredCanvasPixels(page, 'OB')).toBeGreaterThan(20);
   await panel.locator('.type-fvg input').check();
   await panel.locator('.type-ob input').uncheck();
   await expect.poll(() => coloredCanvasPixels(page, 'OB')).toBe(0);
+  await expect(legend.getByText('OB', { exact: true })).toHaveCount(0);
   await expect.poll(() => coloredCanvasPixels(page, 'FVG')).toBeGreaterThan(20);
   await panel.locator('.type-ob input').check();
   await panel.getByRole('checkbox', { name: '显示历史回补 / 失效', exact: true }).check();
@@ -128,11 +138,11 @@ test('historical and current rule evidence focuses its exact formation candle an
     await row.locator('.rule-indicator-focus').click();
     await expect(row).toHaveClass(/is-selected/);
     await expect(row.locator('.rule-indicator-price')).toContainText(`${zone.lowerPrice} 至 ${zone.upperPrice}`);
-    await expect(row).toContainText(`形成 ${utc(zone.formedAt)} UTC`);
-    await expect(row).toContainText(`起源 ${utc(zone.originTime)} UTC`);
+    await expect(row).toContainText(`形成 ${utc(zone.formedAt)} UTC+8`);
+    await expect(row).toContainText(`起源 ${utc(zone.originTime)} UTC+8`);
     await expect(row.locator('.rule-indicator-evidence')).toContainText(zone.rationale);
     await expect(row.locator('.rule-indicator-evidence')).toContainText(zone.invalidation);
-    await expect(page.locator('.readout-time')).toHaveText(`${utc(zone.formedAt)} UTC`);
+    await expect(page.locator('.readout-time')).toHaveText(`${utc(zone.formedAt)} UTC+8`);
     await expect.poll(() => coloredCanvasPixels(page, zone.type)).toBeGreaterThan(20);
   }
   await expect(panel.getByRole('checkbox', { name: '显示历史回补 / 失效', exact: true })).toBeChecked();
@@ -144,6 +154,9 @@ test('historical and current rule evidence focuses its exact formation candle an
   await page.getByLabel('合约标的', { exact: true }).fill('SNDKUSDT');
   await page.getByRole('button', { name: '加载行情', exact: true }).click();
   await expect(page.locator('.instrument-name')).toContainText('SNDKUSDT');
+  // Changing the instrument clears the selected indicator and collapses its panel.
+  const details = page.locator('details.chart-indicator-details');
+  if (await details.getAttribute('open') === null) await details.locator(':scope > summary').click();
   await expect(panel.locator('.rule-indicator-row').first()).toBeVisible();
   await expect(panel.locator('.rule-indicator-row.is-selected')).toHaveCount(0);
   expect(requestCount()).toBe(0);
@@ -169,7 +182,7 @@ test('forming-only gap stays absent until close and mobile rule controls do not 
   await expect(panel.locator('.rule-indicator-row')).toHaveCount(1);
   await panel.locator('.rule-indicator-focus').click();
   await expect(panel.locator('.rule-indicator-evidence')).toBeVisible();
-  await expect(page.locator('.readout-time')).toHaveText(`${utc(candles[19].timestamp)} UTC`);
+  await expect(page.locator('.readout-time')).toHaveText(`${utc(candles[19].timestamp)} UTC+8`);
   await expect.poll(() => coloredCanvasPixels(page, 'FVG')).toBeGreaterThan(20);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect(await panel.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);

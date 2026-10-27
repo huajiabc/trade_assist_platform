@@ -1,3 +1,4 @@
+import { formatDisplayTime } from '../../shared/displayTime';
 import { useState } from 'react';
 import type { Analysis, Structure } from '../../shared/analysis';
 import type { Candle } from '../../shared/market';
@@ -6,7 +7,7 @@ import { selectStructureReferences } from '../../shared/structureEvidence';
 import { auditStructure, type PriceEvidence } from '../../shared/analysisResearch';
 import { formatPrice } from '../../shared/format';
 import { paRegimeNames } from './PriceActionPanel';
-const date = (time: number | null | undefined) => time == null ? '尚无可核验时间' : new Date(time * 1000).toISOString().replace('T', ' ').slice(0,16) + ' UTC';
+const date = (time: number | null | undefined) => time == null ? '尚无可核验时间' : formatDisplayTime(time) + ' UTC+8';
 export function EvidenceDetails({ item, price, candles, evidence }: { item?: Structure; price?: PriceEvidence; candles: readonly Candle[]; evidence: StructureEvidence }) {
   if (!item && !price) return null;
   const rule = item && evidence.structures.find(entry => entry.id === item.id);
